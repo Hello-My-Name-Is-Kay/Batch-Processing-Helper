@@ -5,63 +5,59 @@ description: Multi-provider async batch processing for LLMs (Anthropic, OpenRout
 
 # Batch Processing Helper
 
-Project at `{{ cwd | default("Batch-Processing-Helper") }}`. Requires `venv/` and API keys.
+Project at `{{ cwd | default("Batch-Processing-Helper") }}`. Requires `venv/` and an API key for the provider in use (environment or `.env`).
 
 ## Quick reference
 
 | Task | Command |
 |------|---------|
 | Submit a batch request | `bash batch.sh send "Your task"` |
+| Submit several prompts as one batch | `bash batch.sh send "Task 1" "Task 2" "Task 3"` |
+| Submit a file of prompts as one batch | `bash batch.sh send-file prompts.txt` |
+| Preview a batch without sending it | `bash batch.sh --dry-run send "Task"` |
+| Record which agent owns the batch | `bash batch.sh --agent "my-session" send "Task"` |
 | Submit via OpenRouter with model | `bash batch.sh --provider openrouter --model "deepseek/deepseek-v4.1-flash" send "Task"` |
 | Check pipeline status | `bash batch.sh status` |
+| Run one poll + route cycle by hand | `bash batch.sh poll` |
 | View recent completions | `bash batch.sh history` |
 | View per-provider/per-model stats | `bash batch.sh stats` |
+| View end-to-end latency and throughput | `bash batch.sh metrics` |
 | View items needing review | `bash batch.sh escalations` |
 | Launch interactive TUI | `bash batch.sh tui` |
 | Run unit tests | `python3 test_batch_pipeline.py --unit` |
 
-## Architecture
-
-```
-User Task → Provider Abstraction Layer → Batch API (Anthropic/OpenRouter)
-                                               ↓ (async, minutes/hours)
-         LLM Router ←─────────────── Completed results
-            ↓
-     Archive / Escalate / Re-queue
-            ↓
-     📊 History Database ←── every completion logged
-```
+How it works: see `PIPELINE.md`. Metrics vs stats: see `METRICS.md`.
 
 ## Providers
 
-- **Anthropic**: `export ANTHROPIC_API_KEY="sk-..."`
-- **OpenRouter**: `export OPENROUTER_API_KEY="sk-..."` + `export BATCH_PROVIDER=openrouter`
-- Model gets `:batch` suffix appended automatically for OpenRouter
+- **Anthropic**: `ANTHROPIC_API_KEY`
+- **OpenRouter**: `OPENROUTER_API_KEY` and `BATCH_PROVIDER=openrouter`; model IDs are sent exactly as written
 
-## Project structure key files
+## Key files
 
 | File | Purpose |
 |------|---------|
-| `batch-submit.py` | Submit requests |
-| `batch-poll.py` | Poll for completion + log history |
-| `batch-router.py` | Route results via LLM |
-| `batch_history.py` | Persistent history & aggregates |
+| `batch-submit.py` | Submit one request, or a whole prompt file as one batch |
+| `batch-poll.py` | Poll for completion, download results, log history |
+| `batch-router.py` | Classify each result: archive or escalate |
+| `batch_common.py` | Folder defaults, locked state file, shared formatting |
+| `batch_history.py` | Persistent history and aggregates |
 | `batch_tui.py` | Interactive terminal UI |
-| `test_batch_pipeline.py` | Test suite (21 tests) |
 | `batch-mcp.py` | MCP server (Claude Desktop, etc.) |
 | `providers/` | Provider abstraction layer |
-| `.batch-data/history/` | Persistent history database |
+| `test_batch_pipeline.py` | Test suite (`--unit`, `--live`, `--filter TEXT`) |
 
 ## Key env vars
 
 ```
-BATCH_PROVIDER     — anthropic (default) or openrouter
-BATCH_MODEL        — model name (default: claude-haiku-4-5-20251001)
-OPENROUTER_BATCH_MODEL — model override for OpenRouter
+BATCH_PROVIDER          anthropic (default) or openrouter
+BATCH_MODEL             model name; unset = the provider's default
+OPENROUTER_BATCH_MODEL  model override for OpenRouter
+BATCH_DIR               where runtime data lives (default .batch-data/)
 ```
 
 ## Common issues
 
-- **"No module named batch_history"**: Ensure `venv/` is active
-- **OpenRouter batch stuck**: Check at openrouter.ai/batches — processing time varies by provider backend
-- **Router uses batch instead of live**: Ensure `chat_complete()` is implemented for your provider
+- **`ModuleNotFoundError`**: the dependencies are not in `venv/`; run `pip install -r requirements.txt` there.
+- **Scheduled job does nothing**: read `.batch-data/logs/orchestrator.log`; cron needs the key in `.env`.
+- **Batch seems stuck**: batch APIs can take up to 24 hours; check `bash batch.sh status` and `poll.log`.

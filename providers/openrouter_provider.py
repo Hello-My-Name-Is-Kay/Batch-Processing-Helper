@@ -3,7 +3,8 @@
 OpenRouter's batch API:
 - POST /api/v1/batches  — create a batch (JSON body with endpoint, model, requests[])
 - GET  /api/v1/batches/{id}         — check status (results embedded when completed)
-- POST /api/v1/batches/{id}/cancel   — cancel running batch
+
+OpenRouter does not support cancelling a batch, so there is no cancel call here.
 
 Each request in the array uses OpenAI-compatible chat completions format:
 {
@@ -36,21 +37,19 @@ class OpenRouterProvider(BatchProvider):
 
     Uses direct HTTP requests. Requires OPENROUTER_API_KEY environment variable.
 
-    OpenRouter's batch API (as of 2025):
+    OpenRouter's batch API:
     - POST /api/v1/batches  — create a batch with JSON body {endpoint, model, requests}
-    - GET  /api/v1/batches/{id}         — check status
-    - GET  /api/v1/batches/{id}/results  — retrieve outputs
-    - POST /api/v1/batches/{id}/cancel   — cancel
+    - GET  /api/v1/batches/{id}         — check status; results are embedded once completed
 
     Each request in the array uses OpenAI-compatible chat completions format:
     {"custom_id": "...", "method": "POST", "url": "/v1/chat/completions",
      "body": {"model": "...", "messages": [...], "max_tokens": ...}}
     """
 
-    # OpenRouter requires a batch-capable model (with :batch suffix)
-    BATCH_SUFFIX = ":batch"
+    # Used when neither OPENROUTER_BATCH_MODEL nor BATCH_MODEL is set.
+    DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 
-    def __init__(self, 
+    def __init__(self,
                  api_key: Optional[str] = None,
                  base_url: str = OPENROUTER_BASE_URL,
                  **kwargs):
@@ -66,7 +65,7 @@ class OpenRouterProvider(BatchProvider):
             "Content-Type": "application/json",
         })
         # Extra headers that OpenRouter likes
-        self.session.headers.setdefault("HTTP-Referer", 
+        self.session.headers.setdefault("HTTP-Referer",
                                          os.environ.get("OPENROUTER_REFERER", ""))
         self.session.headers.setdefault("X-Title",
                                          os.environ.get("OPENROUTER_APP_NAME", "batch-pipeline"))
@@ -74,12 +73,11 @@ class OpenRouterProvider(BatchProvider):
     def get_provider_name(self) -> str:
         return "openrouter"
 
-    @staticmethod
-    def _ensure_batch_model(model: str) -> str:
-        """Append :batch suffix if not already present."""
-        if not model.endswith(OpenRouterProvider.BATCH_SUFFIX):
-            return model + OpenRouterProvider.BATCH_SUFFIX
-        return model
+    def default_model(self) -> str:
+        """OPENROUTER_BATCH_MODEL, then BATCH_MODEL, then a built-in default."""
+        return (os.environ.get("OPENROUTER_BATCH_MODEL")
+                or os.environ.get("BATCH_MODEL")
+                or self.DEFAULT_MODEL)
 
     def build_request(self,
                       custom_id: str,
@@ -90,28 +88,24 @@ class OpenRouterProvider(BatchProvider):
                       temperature: float = 0.0) -> dict:
         """Build an OpenRouter-compatible batch request dict.
 
-        Uses OpenAI-compatible chat completions format. The model is
-        automatically given the :batch suffix if needed.
+        Uses OpenAI-compatible chat completions format. The model ID is sent
+        exactly as given: OpenRouter's batch docs use plain model IDs, so no
+        suffix is added.
         """
-        if model is None:
-            model = os.environ.get("OPENROUTER_BATCH_MODEL", 
-                                   os.environ.get("BATCH_MODEL", 
-                                                  "deepseek/deepseek-chat"))
-        
-        # Ensure we use the batch-capable model variant
-        batch_model = self._ensure_batch_model(model)
-        
+        if not model:
+            model = self.default_model()
+
         messages = []
         if system_message:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": user_message})
-        
+
         return {
             "custom_id": custom_id,
             "method": "POST",
             "url": "/v1/chat/completions",
             "body": {
-                "model": batch_model,
+                "model": model,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
@@ -135,9 +129,7 @@ class OpenRouterProvider(BatchProvider):
 
         # Infer endpoint and model from the first request's body
         first_body = requests[0].get("body", {})
-        model = first_body.get("model", "deepseek/deepseek-chat")
-        # Ensure batch-capable model
-        model = self._ensure_batch_model(model)
+        model = first_body.get("model") or self.default_model()
 
         # Build the batch payload
         payload = {
@@ -167,34 +159,35 @@ class OpenRouterProvider(BatchProvider):
 
     def retrieve_batch(self, batch_id: str) -> dict:
         """Get batch status from OpenRouter.
-        
+
         Returns dict with status, id, and OpenRouter-specific fields.
         Maps OpenRouter status values to standard BatchStatus values.
         """
         url = f"{self.base_url}/batches/{batch_id}"
         resp = self.session.get(url, timeout=DEFAULT_TIMEOUT)
-        
+
         if resp.status_code != 200:
             raise RuntimeError(
                 f"Failed to retrieve batch {batch_id} (HTTP {resp.status_code}): "
                 f"{resp.text[:300]}"
             )
-        
+
         data = resp.json()
-        
+
         # Map OpenRouter status to standard
         status_map = {
             "validating": BatchStatus.PENDING,
             "in_progress": BatchStatus.PROCESSING,
             "processing": BatchStatus.PROCESSING,
+            "finalizing": BatchStatus.PROCESSING,
             "completed": BatchStatus.COMPLETED,
             "failed": BatchStatus.FAILED,
             "cancelled": BatchStatus.CANCELLED,
             "expired": BatchStatus.FAILED,
         }
-        
+
         raw_status = data.get("status", "unknown")
-        
+
         result = {
             "id": data.get("id", batch_id),
             "status": status_map.get(raw_status, BatchStatus.PENDING),
@@ -209,11 +202,11 @@ class OpenRouterProvider(BatchProvider):
             "provider_backend": data.get("provider", ""),
             "usage": data.get("usage", {}),
         }
-        
+
         # OpenRouter may store output in a file reference
         if data.get("output"):
             result["output_file_id"] = data["output"].get("file_id")
-        
+
         return result
 
     def get_results(self, batch_id: str) -> list[BatchResult]:
@@ -300,10 +293,8 @@ class OpenRouterProvider(BatchProvider):
 
         Uses the standard /v1/chat/completions endpoint (non-batch).
         """
-        if model is None:
-            model = os.environ.get("OPENROUTER_BATCH_MODEL",
-                                   os.environ.get("BATCH_MODEL",
-                                                  "deepseek/deepseek-chat"))
+        if not model:
+            model = self.default_model()
 
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -316,7 +307,10 @@ class OpenRouterProvider(BatchProvider):
         resp = self.session.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
 
         if resp.status_code != 200:
-            return None
+            raise RuntimeError(
+                f"OpenRouter chat completion failed (HTTP {resp.status_code}): "
+                f"{resp.text[:300]}"
+            )
 
         data = resp.json()
         choices = data.get("choices", [])
@@ -325,19 +319,3 @@ class OpenRouterProvider(BatchProvider):
 
         message = choices[0].get("message", {})
         return message.get("content")
-
-    def cancel_batch(self, batch_id: str) -> bool:
-        """Cancel a running OpenRouter batch.
-
-        Returns True if cancellation was successful.
-        """
-        url = f"{self.base_url}/batches/{batch_id}/cancel"
-        resp = self.session.post(url, timeout=DEFAULT_TIMEOUT)
-
-        if resp.status_code == 200:
-            return True
-
-        raise RuntimeError(
-            f"Failed to cancel batch {batch_id} (HTTP {resp.status_code}): "
-            f"{resp.text[:300]}"
-        )

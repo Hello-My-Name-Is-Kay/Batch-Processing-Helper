@@ -2,15 +2,16 @@
 
 import os
 from typing import Optional
-from datetime import datetime
 import anthropic
 
 from .base import BatchProvider, BatchResult, BatchStatus
 
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
 
 class AnthropicProvider(BatchProvider):
     """Provider for the Anthropic Batch API.
-    
+
     Uses the anthropic Python SDK to submit, poll, and retrieve batches.
     Requires ANTHROPIC_API_KEY environment variable.
     """
@@ -22,11 +23,13 @@ class AnthropicProvider(BatchProvider):
                 "ANTHROPIC_API_KEY is required. Set it in environment or pass api_key."
             )
         self.client = anthropic.Anthropic(api_key=self.api_key)
-        # Enable beta features for batch API
-        self.beta_client = anthropic.Anthropic(api_key=self.api_key)
 
     def get_provider_name(self) -> str:
         return "anthropic"
+
+    def default_model(self) -> str:
+        """BATCH_MODEL if set, otherwise Claude Haiku."""
+        return os.environ.get("BATCH_MODEL") or DEFAULT_MODEL
 
     def build_request(self,
                       custom_id: str,
@@ -36,9 +39,9 @@ class AnthropicProvider(BatchProvider):
                       max_tokens: int = 2048,
                       temperature: float = 0.0) -> dict:
         """Build an Anthropic-compatible batch request dict."""
-        if model is None:
-            model = os.environ.get("BATCH_MODEL", "claude-haiku-4-5-20251001")
-        
+        if not model:
+            model = self.default_model()
+
         if system_message is None:
             system_message = (
                 "You are an AI assistant helping with automated batch processing. "
@@ -62,9 +65,12 @@ class AnthropicProvider(BatchProvider):
                        model: Optional[str] = None,
                        max_tokens: int = 512,
                        temperature: float = 0.0) -> Optional[str]:
-        """Synchronous live chat completion via Anthropic Messages API."""
-        if model is None:
-            model = os.environ.get("BATCH_MODEL", "claude-haiku-4-5-20251001")
+        """Synchronous live chat completion via Anthropic Messages API.
+
+        API errors (bad key, rate limit, network) are raised, not hidden.
+        """
+        if not model:
+            model = self.default_model()
 
         # Separate system message from user/assistant messages
         system = None
@@ -87,12 +93,9 @@ class AnthropicProvider(BatchProvider):
         if system:
             kwargs["system"] = system
 
-        try:
-            response = self.client.messages.create(**kwargs)
-            if response.content:
-                return response.content[0].text
-        except Exception:
-            pass
+        response = self.client.messages.create(**kwargs)
+        if response.content:
+            return response.content[0].text
         return None
 
     def create_batch(self, requests: list[dict]) -> str:
@@ -113,101 +116,96 @@ class AnthropicProvider(BatchProvider):
     def retrieve_batch(self, batch_id: str) -> dict:
         """Get batch status from Anthropic.
 
-        Returns dict with status, id, and Anthropic-specific fields.
-        Maps Anthropic processing_status to standard BatchStatus values.
+        Maps the batch's processing_status (in_progress, canceling, ended) to
+        the standard BatchStatus values. An ended batch always has results to
+        download; how each request fared (succeeded, errored, expired,
+        canceled) is reported per result by get_results().
+
+        Token usage is not part of the batch object, so it is not returned
+        here; the poller sums it from the results.
         """
         batch = self.client.beta.messages.batches.retrieve(batch_id)
 
-        # Map Anthropic status to standard
-        status_map = {
-            "in_progress": BatchStatus.PROCESSING,
-            "succeeded": BatchStatus.COMPLETED,
-            "failed": BatchStatus.FAILED,
-            "cancelled": BatchStatus.CANCELLED,
-            "expired": BatchStatus.FAILED,
-        }
+        counts = batch.request_counts
+        succeeded = counts.succeeded
+        errored = counts.errored
+        expired = counts.expired
+        canceled = counts.canceled
+        processing = counts.processing
+        total = succeeded + errored + expired + canceled + processing
 
-        # Build rich result with history tracking fields
-        result = {
+        raw_status = batch.processing_status
+        if raw_status == "ended":
+            if canceled and canceled == total:
+                status = BatchStatus.CANCELLED
+            else:
+                status = BatchStatus.COMPLETED
+        elif raw_status in ("in_progress", "canceling"):
+            status = BatchStatus.PROCESSING
+        else:
+            status = BatchStatus.PENDING
+
+        return {
             "id": batch.id,
-            "status": status_map.get(batch.processing_status, BatchStatus.PENDING),
-            "raw_status": batch.processing_status,
+            "status": status,
+            "raw_status": raw_status,
+            # Same keys as the OpenRouter provider; the Anthropic-specific
+            # breakdown is kept alongside.
             "request_counts": {
-                "processing": batch.request_counts.processing if hasattr(batch.request_counts, 'processing') else 0,
-                "succeeded": batch.request_counts.succeeded if hasattr(batch.request_counts, 'succeeded') else 0,
-                "failed": batch.request_counts.failed if hasattr(batch.request_counts, 'failed') else 0,
-            } if hasattr(batch, 'request_counts') else {},
-            "ended_at": batch.ended_at.isoformat() if hasattr(batch, 'ended_at') and batch.ended_at is not None and hasattr(batch.ended_at, 'isoformat') else (batch.ended_at if hasattr(batch, 'ended_at') else None),
-            "created_at": batch.created_at.isoformat() if hasattr(batch, 'created_at') and batch.created_at is not None and hasattr(batch.created_at, 'isoformat') else (batch.created_at if hasattr(batch, 'created_at') else None),
+                "total": total,
+                "completed": succeeded,
+                "failed": errored + expired + canceled,
+                "processing": processing,
+                "errored": errored,
+                "expired": expired,
+                "canceled": canceled,
+            },
+            "created_at": self._to_unix(batch.created_at),
+            "ended_at": self._to_unix(batch.ended_at),
         }
 
-        # Extract model from the first request if available
-        if hasattr(batch, 'requests') and batch.requests:
-            first_req = batch.requests[0]
-            if hasattr(first_req, 'params') and first_req.params:
-                result["model"] = first_req.params.get("model", "")
-                result["raw_model"] = first_req.params.get("model", "")
-
-        # Extract token usage if available
-        if hasattr(batch, 'usage_stats') and batch.usage_stats:
-            usage = batch.usage_stats
-            result["usage"] = {
-                "prompt_tokens": getattr(usage, 'input_tokens', 0),
-                "completion_tokens": getattr(usage, 'output_tokens', 0),
-                "total_tokens": (getattr(usage, 'input_tokens', 0) + getattr(usage, 'output_tokens', 0)),
-            }
-
-        # Estimate cost (Anthropic Claude rates — approximate)
-        usage = result.get("usage", {})
-        if usage.get("total_tokens", 0) > 0:
-            model_name = result.get("model", "")
-            # Rough estimate: $0.25/M input, $1.25/M output for Haiku
-            input_cost_per_m = 0.25
-            output_cost_per_m = 1.25
-            if "sonnet" in model_name:
-                input_cost_per_m = 3.0
-                output_cost_per_m = 15.0
-            result["usage"]["cost"] = round(
-                (usage.get("prompt_tokens", 0) / 1_000_000 * input_cost_per_m) +
-                (usage.get("completion_tokens", 0) / 1_000_000 * output_cost_per_m), 8
-            )
-
-        return result
+    @staticmethod
+    def _to_unix(value) -> Optional[float]:
+        """Convert an SDK datetime to a unix timestamp (None if missing)."""
+        return value.timestamp() if value is not None else None
 
     def get_results(self, batch_id: str) -> list[BatchResult]:
-        """Retrieve results from a completed Anthropic batch.
-        
+        """Retrieve results from a finished Anthropic batch.
+
+        Every result gets a standard status: "completed" when the request
+        succeeded, "failed" (with an error message) when it errored, expired
+        or was canceled.
+
         Args:
             batch_id: The batch ID from create_batch().
-            
+
         Returns:
             List of BatchResult objects.
         """
-        results = self.client.beta.messages.batches.results(batch_id)
-        
         batch_results = []
-        for result in results:
-            br = BatchResult(
-                custom_id=result.custom_id,
-                status=result.result.type if hasattr(result.result, 'type') else "unknown",
-                raw=result,
-            )
-            
-            if hasattr(result.result, 'message') and result.result.message:
-                message = result.result.message
-                if message.content:
-                    br.content = message.content[0].text if message.content else ""
-                if hasattr(message, 'stop_reason'):
-                    br.finish_reason = message.stop_reason
-                if hasattr(message, 'usage'):
-                    br.usage = {
-                        "input_tokens": message.usage.input_tokens if hasattr(message.usage, 'input_tokens') else 0,
-                        "output_tokens": message.usage.output_tokens if hasattr(message.usage, 'output_tokens') else 0,
-                    }
-            elif br.status == "error" and hasattr(result.result, 'error'):
-                br.error = str(result.result.error)
+        for item in self.client.beta.messages.batches.results(batch_id):
+            outcome = item.result
+            br = BatchResult(custom_id=item.custom_id, raw=item)
+
+            if outcome.type == "succeeded":
+                message = outcome.message
+                br.status = BatchStatus.COMPLETED
+                br.content = "".join(
+                    block.text for block in message.content
+                    if getattr(block, "type", None) == "text"
+                )
+                br.finish_reason = message.stop_reason
+                br.usage = {
+                    "input_tokens": message.usage.input_tokens,
+                    "output_tokens": message.usage.output_tokens,
+                }
+            elif outcome.type == "errored":
                 br.status = BatchStatus.FAILED
-            
+                br.error = str(outcome.error)
+            else:
+                br.status = BatchStatus.FAILED
+                br.error = f"Request {outcome.type} before it could be processed"
+
             batch_results.append(br)
-        
+
         return batch_results

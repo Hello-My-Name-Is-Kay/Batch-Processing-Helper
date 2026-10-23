@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-batch-tui.py — Interactive TUI for the Batch Processing Pipeline.
+batch_tui.py — Interactive TUI for the Batch Processing Pipeline.
 
 A Textual-based terminal UI with mouse and keyboard navigation for:
   • Dashboard — pipeline overview, counts, recent completions
@@ -9,20 +9,16 @@ A Textual-based terminal UI with mouse and keyboard navigation for:
   • Escalations — items needing human review
   • Logs      — recent poll/router log tail
 
-Keyboard:  1-5 screens, r refresh, q quit, ↑↓ scroll, / search
-Mouse:     Click tabs, scroll tables, click items for details
+Keyboard:  1-5 switch tabs, r refresh, q quit
+Mouse:     click tabs, scroll tables
 """
 
 import sys
-import os
-import json
-import time
 from pathlib import Path
 from datetime import datetime
 
 # ── Textual imports ────────────────────────────────────────────────
 from textual.app import App, ComposeResult
-from textual.screen import Screen
 from textual.widgets import (
     Header, Footer, Static, DataTable, RichLog,
     TabbedContent, TabPane, Rule
@@ -35,40 +31,18 @@ from rich.text import Text
 _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE))
 
-# Import project modules (best-effort)
-_HISTORY_OK = False
-try:
-    from batch_history import read_history, get_aggregates
-    _HISTORY_OK = True
-except Exception:
-    pass
+from batch_common import (
+    format_age, format_duration, pipeline_counts, read_escalations, read_state, resolve_paths,
+)
+from batch_history import read_history, get_aggregates
 
 
 # ═══════════════════════════════════════════════════════════════════
 #  Data helpers
 # ═══════════════════════════════════════════════════════════════════
 
-def _batch_data_dir() -> Path:
-    return Path(os.environ.get("BATCH_DIR", _HERE / ".batch-data"))
-
-
-def _load_state() -> dict:
-    sf = _batch_data_dir() / ".batch-state"
-    if sf.exists():
-        try:
-            return json.loads(sf.read_text())
-        except Exception:
-            return {}
-    return {}
-
-
-def _count_files(subdir: str, pattern: str) -> int:
-    d = _batch_data_dir() / subdir
-    return len(list(d.glob(pattern))) if d.exists() else 0
-
-
 def _read_log(log_name: str, lines: int = 30) -> str:
-    log_file = _batch_data_dir() / "logs" / log_name
+    log_file = Path(resolve_paths()["logs_dir"]) / log_name
     if log_file.exists():
         try:
             content = log_file.read_text()
@@ -78,42 +52,11 @@ def _read_log(log_name: str, lines: int = 30) -> str:
     return f"(no {log_name} yet)"
 
 
-def _get_escalations() -> list[dict]:
-    esc_dir = _batch_data_dir() / "escalations"
-    if not esc_dir.exists():
-        return []
-    entries = []
-    for f in sorted(esc_dir.glob("*.escalate"), reverse=True)[:50]:
-        try:
-            entries.append(json.loads(f.read_text()))
-        except Exception:
-            entries.append({"file": f.name, "error": "parse failed"})
-    return entries
-
-
-def _format_duration(seconds: float) -> str:
-    if seconds is None or seconds == 0:
-        return "—"
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        return f"{seconds / 60:.1f}m"
-    else:
-        return f"{seconds / 3600:.1f}h"
-
-
-def _age_from_unix(unix_ts: Optional[float]) -> str:
-    if not unix_ts:
-        return "—"
-    diff = time.time() - unix_ts
-    return _format_duration(diff)
-
-
 # ═══════════════════════════════════════════════════════════════════
 #  Screens
 # ═══════════════════════════════════════════════════════════════════
 
-class DashboardScreen(Screen):
+class DashboardScreen(Vertical):
     """Main dashboard — counts, recent history, quick stats."""
 
     def compose(self) -> ComposeResult:
@@ -126,20 +69,15 @@ class DashboardScreen(Screen):
             yield Rule()
             yield Static(id="dash-aggregates", markup=True)
 
-    def on_screen_mounted(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_content()
 
     def refresh_content(self) -> None:
-        state = _load_state()
+        state = read_state()
 
         # ── Counts ──
-        n_total = len(state)
-        n_running = sum(1 for v in state.values() if v.get("status") == "running")
-        n_completed = sum(1 for v in state.values() if v.get("status") == "completed")
-        n_failed = sum(1 for v in state.values() if v.get("status") == "failed")
-        n_queued_req = _count_files("requests", "*.jsonl")
-        n_esc = _count_files("escalations", "*.escalate")
-        n_done = _count_files("completed", "*.done")
+        pipeline = pipeline_counts()
+        history = read_history()
 
         providers = set(v.get("provider", "?") for v in state.values())
         prov_str = ", ".join(sorted(providers)) if providers else "none"
@@ -154,54 +92,47 @@ class DashboardScreen(Screen):
             ("\n", ""),
             ("Pipeline Status", "bold white underline"),
             ("\n\n", ""),
-            (f"  Batches:     {n_total:3d} total  ", ""),
-            (f"{n_running:3d} running  ", "cyan"),
-            (f"{n_completed:3d} completed  ", "green"),
-            (f"{n_failed:3d} failed\n", "red"),
-            (f"  Files:       {n_queued_req:3d} queued  ", ""),
-            (f"{n_done:3d} completed  ", "green"),
-            (f"{n_esc:3d} escalated\n", "yellow"),
+            (f"  Batches:     {pipeline['batches']:3d} total  ", ""),
+            (f"{pipeline['running']:3d} running  ", "cyan"),
+            (f"{pipeline['completed']:3d} completed  ", "green"),
+            (f"{pipeline['failed'] + pipeline['cancelled']:3d} failed or cancelled\n", "red"),
+            (f"  Results:     {pipeline['awaiting_routing']:3d} to route  ", ""),
+            (f"{pipeline['archived']:3d} archived  ", "green"),
+            (f"{pipeline['escalations']:3d} escalated\n", "yellow"),
             (f"  Providers:   {prov_str}\n", "white"),
-            (f"  History:     {_count_files('history', '*.jsonl')} entries", "blue"),
+            (f"  History:     {len(history)} entries", "blue"),
             ("\n", ""),
         )
 
         # ── Recent history ──
         hist_lines = [("\nRecent Completions\n", "bold white underline"), ("\n", "")]
-        if _HISTORY_OK:
-            entries = read_history()[:8]
-            if entries:
-                for e in entries:
-                    model_s = e.get("raw_model", e.get("model", "?"))[:35]
-                    lat = e.get("latency_seconds", 0)
-                    cost = e.get("cost", 0)
-                    ts = datetime.fromtimestamp(e.get("finalized_at", 0)).strftime("%H:%M:%S") if e.get("finalized_at") else "?"
-                    prov = e.get("provider", "?")
-                    line = f"  [{ts}] {prov}: {model_s}  latency={_format_duration(lat)}  cost=${cost:.6f}\n"
-                    hist_lines.append((line, "white"))
-            else:
-                hist_lines.append(("  (no history yet — submit a batch first)\n", "dim white"))
+        if history:
+            for e in history[:8]:
+                model_s = e.get("raw_model", e.get("model", "?"))[:35]
+                lat = e.get("latency_seconds", 0)
+                cost = e.get("cost")
+                cost_s = f"${cost:.6f}" if cost else "—"
+                ts = datetime.fromtimestamp(e.get("finalized_at", 0)).strftime("%H:%M:%S") if e.get("finalized_at") else "?"
+                prov = e.get("provider", "?")
+                line = f"  [{ts}] {prov}: {model_s}  latency={format_duration(lat)}  cost={cost_s}\n"
+                hist_lines.append((line, "white"))
         else:
-            hist_lines.append(("  (batch_history module not available)\n", "dim red"))
+            hist_lines.append(("  (no history yet — submit a batch first)\n", "dim white"))
 
         # ── Aggregates ──
         agg_lines = [("\nPer-Provider Aggregates\n", "bold white underline"), ("\n", "")]
-        if _HISTORY_OK:
-            agg = get_aggregates()
-            bp = agg.get("by_provider", {})
-            if bp:
-                for prov, stats in bp.items():
-                    lat = stats.get("latency_seconds", {})
-                    cost = stats.get("cost_usd", {})
-                    agg_lines.append((f"  {prov} ({stats.get('batches', 0)} batches)\n", "cyan"))
-                    if lat:
-                        agg_lines.append((f"    Latency: min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s\n", ""))
-                    if cost:
-                        agg_lines.append((f"    Cost:    mean=${cost['mean']:.6f}  total=${cost['sum']:.4f}\n", ""))
-            else:
-                agg_lines.append(("  (no aggregate data yet)\n", "dim white"))
+        by_provider = get_aggregates().get("by_provider", {})
+        if by_provider:
+            for prov, stats in by_provider.items():
+                lat = stats.get("latency_seconds", {})
+                cost = stats.get("cost_usd", {})
+                agg_lines.append((f"  {prov} ({stats.get('batches', 0)} batches)\n", "cyan"))
+                if lat:
+                    agg_lines.append((f"    Latency: min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s\n", ""))
+                if cost:
+                    agg_lines.append((f"    Cost:    mean=${cost['mean']:.6f}  total=${cost['sum']:.4f}\n", ""))
         else:
-            agg_lines.append(("  (history module not available)\n", "dim red"))
+            agg_lines.append(("  (no aggregate data yet)\n", "dim white"))
 
         self.query_one("#dash-title", Static).update(title)
         self.query_one("#dash-counts", Static).update(counts)
@@ -209,7 +140,7 @@ class DashboardScreen(Screen):
         self.query_one("#dash-aggregates", Static).update(Text.assemble(*agg_lines))
 
 
-class BatchesScreen(Screen):
+class BatchesScreen(Vertical):
     """All batch state entries in a sortable table."""
 
     def compose(self) -> ComposeResult:
@@ -219,7 +150,7 @@ class BatchesScreen(Screen):
             yield Static("╚═══════════════════════════════════════════════════════════╝\n", markup=True)
             yield DataTable(id="batches-table")
 
-    def on_screen_mounted(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_content()
 
     def refresh_content(self) -> None:
@@ -227,13 +158,13 @@ class BatchesScreen(Screen):
         table.clear(True)
         table.add_columns("Status", "Provider", "Batch ID", "Model", "Age", "Latency", "Req")
 
-        state = _load_state()
+        state = read_state()
         if not state:
             table.add_row("—", "—", "No batches yet", "—", "—", "—", "—")
             return
 
         # Sort: running first, then by age descending
-        order = {"running": 0, "submitted": 1, "completed": 2, "failed": 3}
+        order = {"running": 0, "submitted": 1, "completed": 2, "failed": 3, "cancelled": 4}
         items = sorted(state.items(),
                        key=lambda x: (order.get(x[1].get("status", ""), 99),
                                       -(x[1].get("submitted_at_unix", 0) or 0)))
@@ -242,8 +173,8 @@ class BatchesScreen(Screen):
             status = info.get("status", "?")
             provider = info.get("provider", "?")[:10]
             model = info.get("model", "?")[:28]
-            age = _age_from_unix(info.get("submitted_at_unix"))
-            lat = _format_duration(info.get("latency_seconds", 0))
+            age = format_age(info.get("submitted_at_unix"))
+            lat = format_duration(info.get("latency_seconds", 0))
             rqs = info.get("request_counts", {})
             if isinstance(rqs, dict):
                 req_str = f"{rqs.get('completed', '?')}/{rqs.get('total', '?')}"
@@ -258,6 +189,8 @@ class BatchesScreen(Screen):
                 s_style = "green"
             elif status == "failed":
                 s_style = "red"
+            elif status == "cancelled":
+                s_style = "yellow"
 
             table.add_row(
                 Text(status, style=s_style) if s_style else status,
@@ -270,7 +203,7 @@ class BatchesScreen(Screen):
             )
 
 
-class HistoryScreen(Screen):
+class HistoryScreen(Vertical):
     """Historical completions with aggregates."""
 
     def compose(self) -> ComposeResult:
@@ -280,7 +213,7 @@ class HistoryScreen(Screen):
             yield Static("\n", markup=True)
             yield DataTable(id="hist-table")
 
-    def on_screen_mounted(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_content()
 
     def refresh_content(self) -> None:
@@ -288,32 +221,28 @@ class HistoryScreen(Screen):
         agg_text = Text.assemble(
             ("Per-Provider / Per-Model Aggregates\n", "bold white underline"),
         )
-        if _HISTORY_OK:
-            agg = get_aggregates()
-            bp = agg.get("by_provider", {})
-            for prov, stats in bp.items():
+        agg = get_aggregates()
+        for prov, stats in agg.get("by_provider", {}).items():
+            lat = stats.get("latency_seconds", {})
+            cost = stats.get("cost_usd", {})
+            agg_text.append(f"\n  {prov} ({stats.get('batches', 0)} batches)\n", "cyan")
+            if lat:
+                agg_text.append(f"    Latency:  min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s\n", "")
+            if cost:
+                agg_text.append(f"    Cost:     mean=${cost['mean']:.6f}  total=${cost['sum']:.4f}\n", "")
+
+        by_model = agg.get("by_model", {})
+        if by_model:
+            agg_text.append("\n  Per Model:\n", "bold white")
+            for model_key, stats in list(by_model.items())[:10]:
                 lat = stats.get("latency_seconds", {})
                 cost = stats.get("cost_usd", {})
-                agg_text.append(f"\n  {prov} ({stats.get('batches', 0)} batches)\n", "cyan")
+                agg_text.append(f"    {model_key[:45]}\n", "white")
                 if lat:
-                    agg_text.append(f"    Latency:  min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s\n", "")
+                    agg_text.append(f"      latency mean={lat['mean']}s  ", "")
                 if cost:
-                    agg_text.append(f"    Cost:     mean=${cost['mean']:.6f}  total=${cost['sum']:.4f}\n", "")
-
-            bm = agg.get("by_model", {})
-            if bm:
-                agg_text.append("\n  Per Model:\n", "bold white")
-                for model_key, stats in list(bm.items())[:10]:
-                    lat = stats.get("latency_seconds", {})
-                    cost = stats.get("cost_usd", {})
-                    agg_text.append(f"    {model_key[:45]}\n", "white")
-                    if lat:
-                        agg_text.append(f"      latency mean={lat['mean']}s  ", "")
-                    if cost:
-                        agg_text.append(f"cost mean=${cost['mean']:.6f}", "")
-                    agg_text.append("\n", "")
-        else:
-            agg_text.append("  (history module not available)\n", "dim red")
+                    agg_text.append(f"cost mean=${cost['mean']:.6f}", "")
+                agg_text.append("\n", "")
 
         self.query_one("#hist-agg", Static).update(agg_text)
 
@@ -322,27 +251,26 @@ class HistoryScreen(Screen):
         table.clear(True)
         table.add_columns("Time", "Provider", "Model", "Latency", "Tokens", "Cost", "Backend")
 
-        if _HISTORY_OK:
-            entries = read_history()[:50]
-            if entries:
-                for e in entries:
-                    ts = ""
-                    if e.get("finalized_at"):
-                        ts = datetime.fromtimestamp(e["finalized_at"]).strftime("%m/%d %H:%M")
-                    prov = e.get("provider", "?")[:10]
-                    model = e.get("raw_model", e.get("model", "?"))[:30]
-                    lat = _format_duration(e.get("latency_seconds", 0))
-                    tokens = str(e.get("total_tokens", "?"))
-                    cost = f"${e.get('cost', 0):.6f}" if e.get("cost") else "—"
-                    backend = (e.get("provider_backend") or "")[:12]
+        entries = read_history()[:50]
+        if not entries:
+            table.add_row("—", "—", "No history entries yet", "—", "—", "—", "—")
+            return
 
-                    table.add_row(ts, prov, model, lat, tokens, cost, backend)
-                return
+        for e in entries:
+            ts = ""
+            if e.get("finalized_at"):
+                ts = datetime.fromtimestamp(e["finalized_at"]).strftime("%m/%d %H:%M")
+            prov = e.get("provider", "?")[:10]
+            model = e.get("raw_model", e.get("model", "?"))[:30]
+            lat = format_duration(e.get("latency_seconds", 0))
+            tokens = str(e.get("total_tokens", "?"))
+            cost = f"${e.get('cost', 0):.6f}" if e.get("cost") else "—"
+            backend = (e.get("provider_backend") or "")[:12]
 
-        table.add_row("—", "—", "No history entries yet", "—", "—", "—", "—")
+            table.add_row(ts, prov, model, lat, tokens, cost, backend)
 
 
-class EscalationsScreen(Screen):
+class EscalationsScreen(Vertical):
     """Items needing human review."""
 
     def compose(self) -> ComposeResult:
@@ -354,33 +282,41 @@ class EscalationsScreen(Screen):
             yield Rule()
             yield Static(id="esc-detail", markup=True)
 
-    def on_screen_mounted(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_content()
 
     def refresh_content(self) -> None:
         table = self.query_one("#esc-table", DataTable)
         table.clear(True)
-        table.add_columns("File", "Content Preview", "Reason")
+        table.add_columns("Request", "Class", "Reason", "Response")
 
-        escs = _get_escalations()
+        escs = read_escalations(50)
         if not escs:
-            table.add_row("—", "No escalations — all clear!", "—")
+            table.add_row("—", "—", "No escalations — all clear!", "—")
             self.query_one("#esc-detail", Static).update("")
             return
 
+        # Text(...) so brackets in model output are not read as markup
         for e in escs:
-            fname = e.get("file", "?")[:20]
-            content = (e.get("content") or e.get("result", {}).get("content") or "(no content)")[:50]
-            reason = (e.get("reason") or e.get("classification") or "")[:30]
-            table.add_row(fname, content, reason)
+            if e.get("error"):
+                table.add_row(Text(e["file"][:24]), "—", Text(e["error"]), "—")
+                continue
+            reason = e["reason"] or e["summary"]
+            preview = " ".join(e["response"].split())
+            table.add_row(
+                Text(e["request_id"][:24]),
+                Text(e["classification"] or "—"),
+                Text(reason[:40]),
+                Text(preview[:50] or "(empty response)"),
+            )
 
         self.query_one("#esc-detail", Static).update(
-            "  Escalations require a human decision. Review each and decide:\n"
-            "  archive → mark as done, escalate → keep for later"
+            "  Each escalation is a file in the escalations folder (<request>.escalate).\n"
+            "  Read it, act on it, then delete the file to clear it from this list."
         )
 
 
-class LogsScreen(Screen):
+class LogsScreen(Vertical):
     """Show recent log output from poll.log and router.log."""
 
     def compose(self) -> ComposeResult:
@@ -393,7 +329,7 @@ class LogsScreen(Screen):
             yield Static("\nRouter Log\n", markup=True, id="log-router-title")
             yield RichLog(id="log-router", highlight=True, markup=True, wrap=True, max_lines=30)
 
-    def on_screen_mounted(self) -> None:
+    def on_mount(self) -> None:
         self.refresh_content()
 
     def refresh_content(self) -> None:
@@ -471,9 +407,6 @@ class BatchTUI(App):
         margin: 0 2;
     }
 
-    Button {
-        margin: 1 2;
-    }
     """
 
     BINDINGS = [
@@ -485,8 +418,6 @@ class BatchTUI(App):
         Binding("r", "refresh", "Refresh"),
         Binding("q", "quit", "Quit"),
     ]
-
-    current_screen: str = "dashboard"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -505,9 +436,9 @@ class BatchTUI(App):
 
     def on_mount(self) -> None:
         """Set up auto-refresh."""
-        self.set_interval(10, self._auto_refresh)
+        self.set_interval(10, self.refresh_active_pane)
 
-    def _auto_refresh(self) -> None:
+    def refresh_active_pane(self) -> None:
         """Refresh the active screen every 10 seconds."""
         try:
             # Find the active tab's content pane and refresh its content
@@ -516,31 +447,26 @@ class BatchTUI(App):
                 for child in tab.children:
                     if hasattr(child, "refresh_content"):
                         child.refresh_content()
-        except Exception:
-            pass
+        except Exception as e:
+            self.notify(f"Refresh failed: {e}", severity="error", timeout=10)
 
     def action_screen_dashboard(self) -> None:
-        self.current_screen = "dashboard"
         self.tabs.active = "tab-dash"
 
     def action_screen_batches(self) -> None:
-        self.current_screen = "batches"
         self.tabs.active = "tab-batches"
 
     def action_screen_history(self) -> None:
-        self.current_screen = "history"
         self.tabs.active = "tab-hist"
 
     def action_screen_escalations(self) -> None:
-        self.current_screen = "escalations"
         self.tabs.active = "tab-esc"
 
     def action_screen_logs(self) -> None:
-        self.current_screen = "logs"
         self.tabs.active = "tab-logs"
 
     def action_refresh(self) -> None:
-        self._auto_refresh()
+        self.refresh_active_pane()
 
 
 # ═══════════════════════════════════════════════════════════════════

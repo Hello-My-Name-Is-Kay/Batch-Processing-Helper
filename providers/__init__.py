@@ -3,18 +3,27 @@
 Supports multiple batch processing backends:
 - Anthropic Batch API
 - OpenRouter Batch API
-- Extensible to other providers
+- Extensible to other providers (see "Adding a provider" in the README)
 """
 
-from .base import BatchProvider, BatchRequest, BatchResult, BatchStatus
-from .anthropic_provider import AnthropicProvider
-from .openrouter_provider import OpenRouterProvider
+import importlib
+import os
 
-# Provider registry
+from .base import BatchProvider, BatchResult, BatchStatus
+
+__all__ = [
+    "BatchProvider", "BatchResult", "BatchStatus",
+    "get_provider", "list_providers",
+]
+
+# Provider registry: name -> (module, class). A provider's module is imported
+# only when that provider is used, so running one provider does not need the
+# other's SDK installed.
 _PROVIDERS = {
-    "anthropic": AnthropicProvider,
-    "openrouter": OpenRouterProvider,
+    "anthropic": (".anthropic_provider", "AnthropicProvider"),
+    "openrouter": (".openrouter_provider", "OpenRouterProvider"),
 }
+
 
 def get_provider(name: str = None, **kwargs) -> BatchProvider:
     """Get a batch provider by name.
@@ -28,21 +37,24 @@ def get_provider(name: str = None, **kwargs) -> BatchProvider:
         A configured BatchProvider instance.
     """
     if name is None:
-        import os
-        name = os.environ.get("BATCH_PROVIDER", "anthropic")
+        name = os.environ.get("BATCH_PROVIDER") or "anthropic"
     
     name = name.lower().strip()
     if name not in _PROVIDERS:
         available = ", ".join(_PROVIDERS.keys())
         raise ValueError(f"Unknown provider '{name}'. Available: {available}")
     
-    provider_cls = _PROVIDERS[name]
-    return provider_cls(**kwargs)
+    module_name, class_name = _PROVIDERS[name]
+    try:
+        module = importlib.import_module(module_name, __package__)
+    except ImportError as e:
+        raise ImportError(
+            f"The '{name}' provider needs a package that is not installed ({e}). "
+            "Run: pip install -r requirements.txt"
+        ) from e
+    return getattr(module, class_name)(**kwargs)
+
 
 def list_providers() -> list[str]:
     """List all registered provider names."""
     return list(_PROVIDERS.keys())
-
-def register_provider(name: str, provider_cls: type) -> None:
-    """Register a custom provider."""
-    _PROVIDERS[name.lower().strip()] = provider_cls
