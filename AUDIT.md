@@ -19,9 +19,16 @@ Not tested at all: real Anthropic or OpenRouter calls (no key used), real cron, 
 
 The architecture is sound and presentable: a provider abstraction, a history layer, a TUI, an MCP server. **The pipeline does not work end to end today.** Seven independent blockers (P0) stop a first-time user from getting one result through. The test suite is green-ish because it never exercises the code that is broken. All of it is fixable; the P0 list is roughly a day of work.
 
+## Review guide
+
+1. Read this page's tables: each finding links a symptom to its fix and says what behaviour changed.
+2. The highest-risk code: `providers/anthropic_provider.py` (status and result mapping), `batch-router.py` (routing rules and consuming results), `batch_common.py` (state lock, atomic writes), `batch-submit.py` (checks before the batch is created), `batch-poll.py` (merging state under the lock).
+3. Run it yourself: `pip install -r requirements.txt ruff==0.17.2`, then `ruff check .` and `python test_batch_pipeline.py --unit` (about a minute, no API keys needed).
+4. Not verified against the live services, so worth a quick manual check: a real Anthropic batch end to end, a real OpenRouter batch (the provider no longer appends `:batch` to model ids, following OpenRouter's docs), the cron job (`bash batch-orchestrator.sh setup-cron`), and the TUI in a real terminal (`bash batch.sh tui`).
+
 ## Fix status (updated after the P0 fixes)
 
-All seven P0 items, all twenty P1 items and the redundancy / dead-code / doc-drift clean-up are done, each with regression tests in `test_batch_pipeline.py` (tests named `P0-n: ...`, `P1-n: ...` and `Cleanup: ...`). `pyproject.toml` and a GitHub Actions workflow are in place (see "Tooling" below). Still open: the hardening notes, a `LICENSE` file, `systemd/` units, and the rest of the Phase 3-4 plan (the mock provider and the other upgrades). Not verified against the real services: the Anthropic and OpenRouter calls were exercised through fakes only. The suite passes on Python 3.15 and on a real Python 3.9.6 venv.
+All seven P0 items, all twenty P1 items and the redundancy / dead-code / doc-drift clean-up are done, each with regression tests in `test_batch_pipeline.py` (tests named `P0-n: ...`, `P1-n: ...` and `Cleanup: ...`). `pyproject.toml` and a GitHub Actions workflow are in place (see "Tooling" below). Still open: the hardening notes, a `LICENSE` file, `systemd/` units, and the rest of the Phase 3-4 plan (the mock provider and the other upgrades). Not verified against the real services: the Anthropic and OpenRouter calls were exercised through fakes only. **Verification** (96 passed, 0 failed, 1 skipped, which is the live OpenRouter test that needs a key): macOS with Python 3.15 and 3.9, and with the oldest supported dependencies (anthropic 0.40.0, requests 2.28.0, textual 0.50.0); Linux in Docker, as a non-root user in a fresh virtual environment, with Python 3.9.25 and 3.12.15, running the same steps as the CI workflow (install, `ruff check .`, `python test_batch_pipeline.py --unit`). Every regression test was also shown to fail when its fix is undone (26 re-broken fixes, all caught). The containers were arm64 (Apple Silicon), GitHub's runners are x86_64, and the workflow has not run on GitHub yet.
 
 | Item | Fix | Behaviour changes to know about |
 |---|---|---|
@@ -66,6 +73,28 @@ All seven P0 items, all twenty P1 items and the redundancy / dead-code / doc-dri
 | Lint | `ruff check .` reports nothing (settings in `pyproject.toml`: F, E9, B at Python 3.9); a test runs it when ruff is installed | |
 | Docs | Rewrote `SETUP.md`, `PIPELINE.md`, `METRICS.md`, `ISSUES.md` and the skill file so they no longer repeat the README or describe removed things (systemd, fish config, the old project path, `:batch`, `history.db.json`, `batch_again`); README layout, history and provider-registration passages fixed | `ISSUES.md` now lists only what is open or unverified |
 | Tests that test nothing | Removed two that made real network calls and accepted any outcome, replaced the "pipeline flow" test (which only checked files it wrote itself) with a real submit -> poll -> route run, and made the router-parse test call the router's own parser; the harness now counts a raised `SkipTest` as skipped | The suite no longer has a "live" test that runs offline |
+
+### Merge with main (R1-R4)
+
+While this work was in progress, `main` gained three commits (R1 multi-request batches, R2 per-request ids, R3 agent ownership, R4 `--dry-run`). They changed `batch-submit.py`, `batch.sh`, `batch-poll.py`, `batch_history.py`, the README and three other scripts, so the branch merges `origin/main` (merge commit `Merge origin/main (R1-R4) into the audit branch`). All four R features are kept and have tests; the audited design won where the two differed.
+
+| Area | On main | In this branch |
+|---|---|---|
+| R1 several requests per batch | Several positional messages and `--from-stdin` | Kept as is, plus `--file` / `batch.sh send-file`. Messages, file and stdin combine in that order. The old second positional argument (system message) is gone on both sides; use `--system` |
+| R2 per-request ids | `batch-0000`, `batch-0001`, ... and a `custom_ids` list in state, tracking file and history | Kept: ids are `<batch id>-0000`, ... and `custom_ids` is stored in the same three places |
+| R3 agent ownership | `--agent`, stored in state, tracking file and history | Kept (the key is only written when an agent is given) |
+| R4 dry-run | `--dry-run` prints the batch and returns | Kept, and now guaranteed to send and write nothing (tested); it still validates ids, provider and key |
+| Wrappers | Added the flags to the old parser and kept `python3 -I`, with `sys.path` lines in four scripts | The flag loop is the fixed one with `--agent`, `--system` and `--dry-run` added; no `-I`, so the `sys.path` lines are dropped |
+| README | Old long README with R1-R4 text | The rewritten README is the base; R1-R4 are documented in it |
+
+Defects in the merged-in code that the resolution fixes:
+
+- The default id prefix was the constant `batch`, so every batch reused `batch-0000`, `batch-0001`, ...: results and escalations are filed by request id and would overwrite each other. Ids now start with the batch's own unique id.
+- For a multi-request batch the state's `custom_id` became a list, but the poller builds `<custom_id>.result` from it, giving a file named after a Python list. `custom_id` stays one string (the batch's tracking id); the list is `custom_ids`.
+- `batch.sh --dry-run send` still printed "Request queued" after a preview.
+- The OpenRouter model substitution in the submit script (`deepseek/deepseek-v4.1-flash` when the Anthropic default was configured) was a workaround for P0-4. The provider now owns that default, so both fixes agree.
+
+Worth knowing: `custom_ids` is stored in the state file, so a batch of 5,000 requests adds roughly 225 KB to it. That is how main does it; if it ever matters, the list could live only in the tracking file.
 
 ### Tooling (pyproject and CI)
 
