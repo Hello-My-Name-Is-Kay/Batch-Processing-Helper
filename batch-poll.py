@@ -178,6 +178,8 @@ def poll_batches(only_provider=None):
                             cost=usage.get('cost'),
                             submitted_at_unix=batch_info.get('submitted_at_unix'),
                             provider_backend=batch_status.get('provider_backend', batch_status.get('provider', '')),
+                            agent=batch_info.get('agent'),
+                            custom_ids=batch_info.get('custom_ids'),
                         )
                         log_completion(entry)
                     except Exception as hist_err:

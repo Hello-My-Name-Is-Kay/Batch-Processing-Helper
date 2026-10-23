@@ -616,8 +616,8 @@ def test_pipeline_end_to_end():
         counts = pipeline_counts()
         assert_eq((counts["running"], counts["completed"], counts["awaiting_routing"]), (0, 1, 0))
         assert_eq((counts["archived"], counts["escalations"]), (1, 1))
-        assert (tmp / "completed" / "grp-0001.done").exists()
-        escalation = json.loads((tmp / "escalations" / "grp-0002.escalate").read_text())
+        assert (tmp / "completed" / "grp-0000.done").exists()
+        escalation = json.loads((tmp / "escalations" / "grp-0001.escalate").read_text())
         assert_eq(escalation["response"], "answer to second question")
         assert (tmp / "responses" / "grp.routed").exists()
         entry = read_history()[0]
@@ -1893,9 +1893,9 @@ def test_p1_20_submit_many():
 
         assert_eq(len(fake.created), 1, "one batch for all prompts")
         requests = fake.created[0]
-        assert_eq([r["custom_id"] for r in requests], ["grp-0001", "grp-0002", "mine"])
+        assert_eq([r["custom_id"] for r in requests], ["grp-0000", "grp-0001", "mine"])
         assert_eq([r["system"] for r in requests], ["shared", "sys-b", "shared"])
-        assert_eq(result["count"], 3)
+        assert_eq(result["request_count"], 3)
         state = json.loads((tmp / ".batch-state").read_text())["batch_fake_1"]
         assert_eq(state["custom_id"], "grp")
         assert_eq(state["request_counts"], {"total": 3, "completed": 0})
@@ -1950,12 +1950,8 @@ def test_p1_20_submit_cli():
 
         code, out, _ = run_main("--file", str(prompts), "--system", "Be brief")
         assert_eq(code, 0)
-        assert_eq(json.loads(out)["count"], 2)
+        assert_eq(json.loads(out)["request_count"], 2)
         assert_eq([r["system"] for r in fake.created[0]], ["Be brief", "Be brief"])
-
-        code, _, err = run_main("--file", str(prompts), "also a message")
-        assert_eq(code, 2)
-        assert "--file" in err
 
         code, _, err = run_main("--file", str(tmp / "missing.txt"))
         assert_eq(code, 1)
@@ -2027,6 +2023,173 @@ def test_p1_20_send_file_wrapper():
         usage = run_cmd(["bash", "batch.sh", "send-file"], env)
         assert_eq(usage.returncode, 1)
         assert "Usage" in usage.stderr
+
+
+# ===========================================================================
+# R1-R4 from main (multi-request batches, per-request ids, agent ownership,
+# dry-run), checked against the reconciled implementation
+# ===========================================================================
+
+def run_submit_main(submit, *argv, stdin=""):
+    """Run batch-submit.py's main() with these arguments; returns (exit code, stdout, stderr)."""
+    old_argv, old_stdin = sys.argv, sys.stdin
+    sys.argv, sys.stdin = ["batch-submit.py", *argv], io.StringIO(stdin)
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            submit.main()
+        return 0, out.getvalue(), err.getvalue()
+    except SystemExit as e:
+        return e.code, out.getvalue(), err.getvalue()
+    finally:
+        sys.argv, sys.stdin = old_argv, old_stdin
+
+
+@test("R1: several messages on the command line go out as ONE batch")
+def test_r1_many_messages():
+    with isolated_env():
+        submit = load_script("batch-submit.py")
+        fake = FakeProvider()
+        submit.get_provider = lambda name=None, **kwargs: fake
+
+        code, out, _ = run_submit_main(submit, "Task one", "Task two", "Task three",
+                                       "--system", "Be brief", "--request-id", "multi")
+
+        assert_eq(code, 0)
+        assert_eq(len(fake.created), 1, "one batch for all messages")
+        assert_eq([r["message"] for r in fake.created[0]], ["Task one", "Task two", "Task three"])
+        assert_eq({r["system"] for r in fake.created[0]}, {"Be brief"})
+        assert_eq(json.loads(out)["request_count"], 3)
+
+
+@test("R1: messages, a prompt file and stdin combine, in that order")
+def test_r1_sources_combine():
+    with isolated_env() as tmp:
+        submit = load_script("batch-submit.py")
+        fake = FakeProvider()
+        submit.get_provider = lambda name=None, **kwargs: fake
+        prompts = tmp / "prompts.txt"
+        prompts.write_text("from file 1\nfrom file 2\n")
+
+        code, out, _ = run_submit_main(submit, "from args", "--file", str(prompts), "--from-stdin",
+                                       stdin="from stdin 1\n\nfrom stdin 2\n")
+
+        assert_eq(code, 0)
+        assert_eq([r["message"] for r in fake.created[0]],
+                  ["from args", "from file 1", "from file 2", "from stdin 1", "from stdin 2"])
+        assert_eq(json.loads(out)["request_count"], 5)
+
+        code, out, _ = run_submit_main(submit)        # nothing to send: prints the help
+        assert_eq(code, 1)
+        assert "usage" in out.lower()
+        assert_eq(len(fake.created), 1, "nothing may be submitted")
+
+
+@test("R1/R3/R4: batch.sh send takes several messages and the --agent, --system and --dry-run flags")
+def test_r1_wrapper_flags():
+    with isolated_env() as tmp:
+        env = clean_env(tmp, OPENROUTER_API_KEY="sk-test-not-real")
+        result = run_cmd(["bash", "batch.sh", "--provider", "openrouter", "--model", "vendor/model",
+                          "--agent", "pi-1", "--system", "Be brief", "--dry-run",
+                          "send", "first", "second", "-third"], env)
+
+        assert_eq(result.returncode, 0, result.stderr[-300:])
+        preview = json.loads(result.stdout[:result.stdout.rindex("}") + 1])
+        assert_eq((preview["dry_run"], preview["request_count"]), (True, 3))
+        assert_eq((preview["provider"], preview["model"], preview["agent"]), ("openrouter", "vendor/model", "pi-1"))
+        assert_eq(preview["system_message"], "Be brief")
+        assert_eq([r["preview"] for r in preview["requests"]], ["first", "second", "-third"])
+        assert "Dry run: nothing was sent" in result.stdout and "queued" not in result.stdout
+        assert not list((tmp / "data" / "requests").glob("*")), "a dry run must not track anything"
+        assert not (tmp / "data" / ".batch-state").exists()
+
+
+@test("R2: each request has its own id, unique across batches, and all ids are tracked")
+def test_r2_ids():
+    with isolated_env() as tmp:
+        submit = load_script("batch-submit.py")
+        first, second = FakeProvider(), FakeProvider()
+
+        submit.get_provider = lambda name=None, **kwargs: first
+        a = quietly(submit.submit_batch, [{"message": "x"}, {"message": "y"}])
+        submit.get_provider = lambda name=None, **kwargs: second
+        b = quietly(submit.submit_batch, [{"message": "x"}, {"message": "y"}])
+
+        assert_eq(a["custom_ids"], [f"{a['request_id']}-0000", f"{a['request_id']}-0001"])
+        assert not set(a["custom_ids"]) & set(b["custom_ids"]), "two batches must never share a request id"
+        assert_eq([r["custom_id"] for r in first.created[0]], a["custom_ids"])
+
+        state = json.loads((tmp / ".batch-state").read_text())["batch_fake_1"]
+        assert_eq(state["custom_ids"], b["custom_ids"])
+        assert isinstance(state["custom_id"], str), "the batch tracking id is one string (it names the .result file)"
+        tracking = json.loads((tmp / "requests" / f"{b['request_id']}.jsonl").read_text())
+        assert_eq(tracking["custom_ids"], b["custom_ids"])
+
+
+@test("R3: the agent that owns a batch follows it into state, tracking file and history")
+def test_r3_agent():
+    from batch_history import read_history
+    from providers.base import BatchStatus, BatchResult
+    with isolated_env() as tmp:
+        submit, poll = load_script("batch-submit.py"), load_script("batch-poll.py")
+        fake = FakeProvider()
+        submit.get_provider = lambda name=None, **kwargs: fake
+
+        result = quietly(submit.submit_batch, [{"message": "a"}, {"message": "b"}],
+                         request_id="owned", agent="pi-session-abc")
+
+        assert_eq(result["agent"], "pi-session-abc")
+        state = json.loads((tmp / ".batch-state").read_text())["batch_fake_1"]
+        assert_eq(state["agent"], "pi-session-abc")
+        assert_eq(json.loads((tmp / "requests" / "owned.jsonl").read_text())["agent"], "pi-session-abc")
+
+        results = [BatchResult(custom_id=cid, content="done", status="completed") for cid in result["custom_ids"]]
+        poll.get_provider = lambda name=None, **kwargs: FakePollProvider(
+            {"batch_fake_1": BatchStatus.COMPLETED}, {"batch_fake_1": results})
+        quietly(poll.poll_batches)
+
+        entry = read_history()[0]
+        assert_eq(entry["agent"], "pi-session-abc")
+        assert_eq(entry["custom_ids"], ["owned-0000", "owned-0001"])
+
+    with isolated_env() as tmp:
+        submit = load_script("batch-submit.py")
+        submit.get_provider = lambda name=None, **kwargs: FakeProvider()
+        quietly(submit.submit_request, "no owner")
+        assert "agent" not in json.loads((tmp / ".batch-state").read_text())["batch_fake_1"]
+
+
+@test("R4: --dry-run previews the batch and sends and writes nothing")
+def test_r4_dry_run():
+    with isolated_env() as tmp:
+        submit = load_script("batch-submit.py")
+        fake = FakeProvider()
+        submit.get_provider = lambda name=None, **kwargs: fake
+        long_message = "x" * 200
+
+        code, out, _ = run_submit_main(submit, "--dry-run", long_message, "short one",
+                                       "--agent", "pi-1", "--model", "m/m", "--request-id", "preview")
+
+        assert_eq(code, 0)
+        preview = json.loads(out)
+        assert_eq((preview["dry_run"], preview["batch_id"], preview["request_count"]), (True, None, 2))
+        assert_eq((preview["request_id"], preview["model"], preview["agent"]), ("preview", "m/m", "pi-1"))
+        assert_eq([r["custom_id"] for r in preview["requests"]], ["preview-0000", "preview-0001"])
+        assert_eq(preview["requests"][0]["preview"], "x" * 80, "long messages are cut for the preview")
+        assert_eq(fake.created, [], "nothing may be sent")
+        assert_eq(list(tmp.iterdir()), [], "nothing may be written")
+
+        code, _, err = run_submit_main(submit, "--dry-run", "x", "--request-id", "bad id")
+        assert_eq(code, 1)
+        assert "Invalid request id" in err, "a dry run still validates"
+
+
+@test("Merge: OpenRouter's default model is the one main's submit script used to substitute")
+def test_merge_openrouter_default():
+    from providers.openrouter_provider import OpenRouterProvider
+    assert_eq(OpenRouterProvider.DEFAULT_MODEL, "deepseek/deepseek-v4.1-flash")
+    with isolated_env():
+        assert_eq(OpenRouterProvider(api_key="sk-test-not-real").default_model(), "deepseek/deepseek-v4.1-flash")
 
 
 # ===========================================================================

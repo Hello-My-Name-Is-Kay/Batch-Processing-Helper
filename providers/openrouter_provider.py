@@ -47,7 +47,7 @@ class OpenRouterProvider(BatchProvider):
     """
 
     # Used when neither OPENROUTER_BATCH_MODEL nor BATCH_MODEL is set.
-    DEFAULT_MODEL = "deepseek/deepseek-chat"
+    DEFAULT_MODEL = "deepseek/deepseek-v4.1-flash"
 
     def __init__(self,
                  api_key: Optional[str] = None,

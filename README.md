@@ -21,7 +21,7 @@ flowchart LR
     D --> I[history.jsonl]
 ```
 
-1. **Submit.** `batch.sh send` writes a request and submits it to the selected provider's batch API.
+1. **Submit.** `batch.sh send` builds one request per message and submits them together, as one batch, to the selected provider's batch API.
 2. **Poll.** A scheduled job checks batch status every 2 minutes by default (`BATCH_POLL_INTERVAL`, applied when you install the cron job) and downloads finished results.
 3. **Route.** An LLM classifier labels each result as `text`, `question`, `error` or `action_needed`. Results are archived or escalated to a human; any other route the classifier returns is escalated too. A routed result is kept as `<id>.routed` in `responses/` and is not classified again.
 4. **Log.** Every completed batch is appended to a history file with provider, model, latency, token counts and cost.
@@ -33,7 +33,10 @@ Routing is automatic, but escalated items wait for a person to review them.
 - Provider abstraction with two implementations today: Anthropic and OpenRouter
 - Background polling through cron
 - LLM-based result router with archive and escalate outcomes
-- Many prompts per batch: `send-file` submits a whole file in one batch, and the router handles each result on its own
+- Many requests per batch: `send` takes several messages, `send-file` a file of prompts, `--from-stdin` a pipe; the router handles each result on its own
+- A unique id for every request (`<batch id>-0000`, `-0001`, …), all of them kept in the state file, the tracking file and the history
+- Agent ownership: `--agent NAME` tags a batch with the agent or session that owns it, so several agents can share one pipeline
+- Pre-submit review: `--dry-run` shows the batch (requests, ids, model, agent) without sending or writing anything
 - CLI (`batch.sh`, with a Fish wrapper) and a five-tab terminal UI built with Textual
 - Per-batch history with per-provider and per-model aggregates (latency, tokens, cost)
 - Unit tests that run offline, plus optional live tests
@@ -43,7 +46,7 @@ Routing is automatic, but escalated items wait for a person to review them.
 | Provider | API used | Default model | Notes |
 |---|---|---|---|
 | Anthropic | Message Batches API | `claude-haiku-4-5-20251001` (`BATCH_MODEL`) | Claude models only |
-| OpenRouter | OpenRouter Batch API | `OPENROUTER_BATCH_MODEL`, falling back to `BATCH_MODEL`, then `deepseek/deepseek-chat` | Only models that offer a batch variant. The model ID is sent exactly as written. |
+| OpenRouter | OpenRouter Batch API | `OPENROUTER_BATCH_MODEL`, falling back to `BATCH_MODEL`, then `deepseek/deepseek-v4.1-flash` | Only models that offer a batch variant. The model ID is sent exactly as written. |
 
 Example OpenRouter model IDs: `anthropic/claude-3.5-haiku`, `openai/gpt-4o`, `google/gemini-2.0-flash-001`, `meta-llama/llama-3.3-70b-instruct`, `deepseek/deepseek-v4.1-flash`. Model availability changes often, so check OpenRouter's models page filtered by batch support before choosing one.
 
@@ -86,7 +89,19 @@ bash batch.sh send "Summarize the main trade-offs of batch APIs in three bullets
 bash batch.sh status
 ```
 
-To send many prompts as one batch, put one prompt per line in a file (or JSON Lines with `message`, `system` and `id` fields) and run `bash batch.sh send-file prompts.txt`.
+To send several prompts as ONE batch, list them, or put one prompt per line in a file (or JSON Lines with `message`, `system` and `id` fields):
+
+```bash
+bash batch.sh send "Task 1" "Task 2" "Task 3"
+bash batch.sh send-file prompts.txt
+cat tasks.txt | python3 batch-submit.py --from-stdin
+```
+
+Each request gets its own id (`<batch id>-0000`, `<batch id>-0001`, …) and its own result. Add `--agent NAME` to record who owns the batch, and `--dry-run` to preview it first:
+
+```bash
+bash batch.sh --agent "my-session" --dry-run send "Task 1" "Task 2"
+```
 
 Finished batches are collected by the scheduler (see [Scheduling](#scheduling)). Then review them:
 
@@ -99,8 +114,11 @@ bash batch.sh stats
 
 | Command | What it does |
 |---|---|
-| `bash batch.sh send "task"` | Submit a task to the default provider |
+| `bash batch.sh send "task" ["task" ...]` | Submit one or more tasks as one batch to the default provider |
 | `bash batch.sh send-file prompts.txt` | Submit every prompt in a file as one batch |
+| `bash batch.sh --agent NAME send "task"` | Record which agent or session owns the batch |
+| `bash batch.sh --system "text" send "task"` | Set the system message for the requests |
+| `bash batch.sh --dry-run send "task"` | Preview the batch without sending or writing anything |
 | `bash batch.sh --provider openrouter --model "<model>" send "task"` | Submit with a specific provider and model |
 | `bash batch.sh status` | Show running, collected, awaiting-routing, escalated and archived counts |
 | `bash batch.sh escalations` | List items that need a human decision |

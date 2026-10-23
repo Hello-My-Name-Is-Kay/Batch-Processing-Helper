@@ -31,7 +31,7 @@ batch.sh send / send-file
 | `logs/` | `orchestrator.log`, `poll.log`, `router.log` |
 | `.batch-state` | Every batch and its status (below) |
 
-`<id>` is the batch's tracking id; each request inside a batch has its own `<request>` id (the same as `<id>` for a single prompt, `<id>-0001`, `<id>-0002`, … for a `send-file` batch).
+`<id>` is the batch's tracking id; each request inside a batch has its own `<request>` id (the same as `<id>` for a single prompt, `<id>-0000`, `<id>-0001`, … when a batch holds several).
 
 ## State file
 
@@ -47,12 +47,14 @@ batch.sh send / send-file
     "submitted_at_unix": 1705312200.0,
     "completed_at_unix": 1705313100.0,
     "latency_seconds": 900.0,
-    "request_counts": {"total": 3, "completed": 3, "failed": 0}
+    "request_counts": {"total": 3, "completed": 3, "failed": 0},
+    "custom_ids": ["6f1c...-0000", "6f1c...-0001", "6f1c...-0002"],
+    "agent": "pi-session-abc"
   }
 }
 ```
 
-`status` is `running` until the poller sees the batch finish, then `completed`, `failed` or `cancelled`. Finished batches are not asked about again.
+`status` is `running` until the poller sees the batch finish, then `completed`, `failed` or `cancelled`. Finished batches are not asked about again. `custom_id` is the batch's tracking id (it names the `.result` file); `custom_ids` lists the id of every request in the batch; `agent` is only present when the batch was submitted with `--agent`.
 
 Every write goes through `batch_common.update_state()`: it takes a file lock, re-reads the file, applies the change and replaces the file atomically. The poller keeps its own copy while it talks to the providers and merges only what it changed, so a `send` that happens during a poll is not lost. A state file that is not valid JSON is moved to `.batch-state.corrupt-<time>`. The lock is `fcntl`-based (Linux and macOS).
 
