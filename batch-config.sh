@@ -78,7 +78,7 @@ export OPENROUTER_APP_NAME="${OPENROUTER_APP_NAME:-batch-pipeline}"
 # --- Models ---
 # Model for batch work (provider-specific). Leave unset to use the selected
 # provider's default: claude-haiku-4-5-20251001 for Anthropic, or
-# OPENROUTER_BATCH_MODEL (else deepseek/deepseek-chat) for OpenRouter.
+# OPENROUTER_BATCH_MODEL (else deepseek/deepseek-v4.1-flash) for OpenRouter.
 # Anthropic: claude-haiku-4-5-20251001, claude-sonnet-4-20250514, etc.
 # OpenRouter: anthropic/claude-3.5-haiku, openai/gpt-4o, google/gemini-2.0-flash-001, etc.
 # OpenRouter model IDs are sent exactly as written; pick one that offers a batch variant.

@@ -12,8 +12,11 @@ Project at `{{ cwd | default("Batch-Processing-Helper") }}`. Requires `venv/` an
 | Task | Command |
 |------|---------|
 | Submit a batch request | `bash batch.sh send "Your task"` |
+| Submit several prompts as one batch | `bash batch.sh send "Task 1" "Task 2" "Task 3"` |
 | Submit a file of prompts as one batch | `bash batch.sh send-file prompts.txt` |
-| Submit via OpenRouter with model | `bash batch.sh --provider openrouter --model "deepseek/deepseek-chat" send "Task"` |
+| Preview a batch without sending it | `bash batch.sh --dry-run send "Task"` |
+| Record which agent owns the batch | `bash batch.sh --agent "my-session" send "Task"` |
+| Submit via OpenRouter with model | `bash batch.sh --provider openrouter --model "deepseek/deepseek-v4.1-flash" send "Task"` |
 | Check pipeline status | `bash batch.sh status` |
 | Run one poll + route cycle by hand | `bash batch.sh poll` |
 | View recent completions | `bash batch.sh history` |

@@ -10,20 +10,30 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Parse global flags: they come before the command.
 PROVIDER_FLAG=""
 MODEL_FLAG=""
+AGENT_FLAG=""
+SYSTEM_FLAG=""
+DRY_RUN=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --provider|-p|--model|-m)
+        --provider|-p|--model|-m|--agent|-a|--system|-s)
             if [ $# -lt 2 ]; then
                 echo "Missing value for $1" >&2
                 exit 1
             fi
-            if [ "$1" = "--provider" ] || [ "$1" = "-p" ]; then
-                PROVIDER_FLAG="$2"
-                export BATCH_PROVIDER="$PROVIDER_FLAG"
-            else
-                MODEL_FLAG="$2"
-            fi
+            case "$1" in
+                --provider|-p)
+                    PROVIDER_FLAG="$2"
+                    export BATCH_PROVIDER="$PROVIDER_FLAG"
+                    ;;
+                --model|-m) MODEL_FLAG="$2" ;;
+                --agent|-a) AGENT_FLAG="$2" ;;
+                --system|-s) SYSTEM_FLAG="$2" ;;
+            esac
             shift 2
+            ;;
+        --dry-run|-n)
+            DRY_RUN="yes"
+            shift
             ;;
         *)
             break
@@ -34,12 +44,33 @@ done
 # Load batch config (after the flags, so --provider decides which API key is checked)
 source "${SCRIPT_DIR}/batch-config.sh"
 
+# Arguments shared by send and send-file, in SUBMIT_ARGS
+build_submit_args() {
+    SUBMIT_ARGS=()
+    [ -n "$PROVIDER_FLAG" ] && SUBMIT_ARGS+=(--provider "$PROVIDER_FLAG")
+    [ -n "$MODEL_FLAG" ] && SUBMIT_ARGS+=(--model "$MODEL_FLAG")
+    [ -n "$AGENT_FLAG" ] && SUBMIT_ARGS+=(--agent "$AGENT_FLAG")
+    [ -n "$SYSTEM_FLAG" ] && SUBMIT_ARGS+=(--system "$SYSTEM_FLAG")
+    [ -n "$DRY_RUN" ] && SUBMIT_ARGS+=(--dry-run)
+    return 0
+}
+
 # Submit through batch-submit.py, pretty-printing its JSON summary when jq is installed
 run_submit() {
     if command -v jq >/dev/null 2>&1; then
         "$BATCH_PYTHON" "${SCRIPT_DIR}/batch-submit.py" "$@" | jq .
     else
         "$BATCH_PYTHON" "${SCRIPT_DIR}/batch-submit.py" "$@"
+    fi
+}
+
+# What to say after a successful submit (or a preview)
+submit_done() {
+    echo ""
+    if [ -n "$DRY_RUN" ]; then
+        echo "Dry run: nothing was sent. Run the same command without --dry-run to submit."
+    else
+        echo "✓ Batch queued. Check status with: batch status"
     fi
 }
 
@@ -52,48 +83,38 @@ fi
 case "$cmd" in
     send)
         if [ $# -lt 1 ]; then
-            echo "Usage: batch [--provider anthropic|openrouter] [--model MODEL] send '<message>' [system_message]" >&2
+            echo "Usage: batch [flags] send '<message>' ['<message>' ...]" >&2
+            echo ""
+            echo "Flags: --provider P  --model M  --agent NAME  --system TEXT  --dry-run"
             echo ""
             echo "Examples:"
             echo "  batch send 'Write a summary'"
+            echo "  batch send 'Task 1' 'Task 2' 'Task 3'       # several requests, one batch"
             echo "  batch --provider openrouter send 'Analyze this code'"
             echo "  batch -p openrouter -m 'openai/gpt-4o' send 'Task description'"
+            echo "  batch --agent 'my-session' send 'Task'"
+            echo "  batch --dry-run send 'Task'                 # preview, send nothing"
             exit 1
         fi
 
-        user_msg="$1"
-        system_msg="${2:-}"
-
-        # Build provider args ("--" keeps a message that starts with "-" from being read as a flag)
-        PY_ARGS=()
-        [ -n "$PROVIDER_FLAG" ] && PY_ARGS+=(--provider "$PROVIDER_FLAG")
-        [ -n "$MODEL_FLAG" ] && PY_ARGS+=(--model "$MODEL_FLAG")
-        PY_ARGS+=(-- "$user_msg")
-        [ -n "$system_msg" ] && PY_ARGS+=("$system_msg")
-
-        run_submit "${PY_ARGS[@]}"
-        echo ""
-        echo "✓ Request queued. Check status with: batch status"
+        # "--" keeps a message that starts with "-" from being read as a flag
+        build_submit_args
+        run_submit "${SUBMIT_ARGS[@]+"${SUBMIT_ARGS[@]}"}" -- "$@"
+        submit_done
         ;;
 
     send-file)
         if [ $# -lt 1 ]; then
-            echo "Usage: batch [--provider anthropic|openrouter] [--model MODEL] send-file <prompts-file> [system_message]" >&2
+            echo "Usage: batch [flags] send-file <prompts-file>" >&2
             echo ""
             echo "One prompt per line (blank lines ignored); a .jsonl file may use"
             echo '{"message": "...", "system": "...", "id": "..."} objects. All prompts go in ONE batch.'
             exit 1
         fi
 
-        PY_ARGS=()
-        [ -n "$PROVIDER_FLAG" ] && PY_ARGS+=(--provider "$PROVIDER_FLAG")
-        [ -n "$MODEL_FLAG" ] && PY_ARGS+=(--model "$MODEL_FLAG")
-        PY_ARGS+=(--file "$1")
-        [ -n "${2:-}" ] && PY_ARGS+=(--system "$2")
-
-        run_submit "${PY_ARGS[@]}"
-        echo ""
-        echo "✓ Batch queued. Check status with: batch status"
+        build_submit_args
+        run_submit "${SUBMIT_ARGS[@]+"${SUBMIT_ARGS[@]}"}" --file "$1"
+        submit_done
         ;;
 
     poll)
@@ -152,15 +173,18 @@ case "$cmd" in
     help|--help|-h)
         echo "Batch Pipeline — Multi-Provider Batch Processing"
         echo ""
-        echo "Usage: batch [--provider PROVIDER] [--model MODEL] COMMAND [args...]"
+        echo "Usage: batch [flags] COMMAND [args...]"
         echo ""
-        echo "Global flags:"
+        echo "Flags (before the command):"
         echo "  --provider, -p   Provider: anthropic (default), openrouter"
         echo "  --model, -m      Model name (provider-specific)"
+        echo "  --agent, -a      Agent/session that owns the batch"
+        echo "  --system, -s     System message for the requests"
+        echo "  --dry-run, -n    Preview the batch without submitting it"
         echo ""
         echo "Commands:"
-        echo "  send '<msg>' [sys_msg]   Submit a batch request"
-        echo "  send-file FILE [sys_msg] Submit every prompt in FILE as one batch"
+        echo "  send '<msg>' [...]       Submit one or more requests as one batch"
+        echo "  send-file FILE           Submit every prompt in FILE as one batch"
         echo "  poll                     Poll for completed batches"
         echo "  status                   Show pipeline status"
         echo "  escalations              View items needing review"
@@ -173,16 +197,19 @@ case "$cmd" in
         echo ""
         echo "Examples:"
         echo "  batch send 'Summarize this file'"
+        echo "  batch send 'Task 1' 'Task 2' 'Task 3'     # multi-request batch"
+        echo "  batch send-file prompts.txt"
         echo "  batch --provider openrouter send 'Analyze code'"
         echo "  batch -p openrouter -m 'openai/gpt-4o' send 'Task'"
-        echo "  batch send-file prompts.txt"
+        echo "  batch --agent 'my-session' send 'Task'    # agent ownership"
+        echo "  batch --dry-run send 'Task'               # preview before sending"
         echo "  batch status"
         echo "  batch tui                # Launch the TUI"
         ;;
 
     *)
         echo "Unknown command: $cmd" >&2
-        echo "Usage: batch [--provider PROVIDER] {send|send-file|poll|status|escalations|metrics|history|stats|logs|providers|tui}" >&2
+        echo "Usage: batch [flags] {send|send-file|poll|status|escalations|metrics|history|stats|logs|providers|tui}" >&2
         exit 1
         ;;
 esac
