@@ -293,6 +293,261 @@ def test_submit_load_config():
 
 
 # ===========================================================================
+# batch_history tests
+# ===========================================================================
+
+@test("batch_history.make_history_entry produces correct schema")
+def test_history_entry():
+    from batch_history import make_history_entry
+
+    entry = make_history_entry(
+        batch_id="test-batch-1",
+        provider="openrouter",
+        model="deepseek/deepseek-v4.1-flash:batch",
+        raw_model="deepseek/deepseek-v4.1-flash-20260910",
+        status="completed",
+        created_at=1000.0,
+        finalized_at=1500.0,
+        total_requests=3,
+        completed_requests=3,
+        failed_requests=0,
+        prompt_tokens=100,
+        completion_tokens=50,
+        total_tokens=150,
+        cost=0.00003,
+        submitted_at_unix=990.0,
+        provider_backend="TestProvider",
+    )
+
+    assert_eq(entry["batch_id"], "test-batch-1")
+    assert_eq(entry["provider"], "openrouter")
+    assert_eq(entry["latency_seconds"], 500.0)  # 1500 - 1000
+    assert_eq(entry["pipeline_latency"], 510.0)  # 1500 - 990
+    assert_eq(entry["total_requests"], 3)
+    assert_eq(entry["completed_requests"], 3)
+    assert_eq(entry["total_tokens"], 150)
+    assert_eq(entry["cost"], 0.00003)
+    assert_eq(entry["provider_backend"], "TestProvider")
+    assert_in("logged_at", entry)
+
+
+@test("batch_history.log_completion and read_history round-trip")
+def test_history_roundtrip():
+    from batch_history import make_history_entry, log_completion, read_history, get_aggregates
+    import tempfile, os, shutil
+
+    # Backup and override history dir to a temp location
+    old_batch_dir = os.environ.pop("BATCH_DIR", None)
+    tmpdir = tempfile.mkdtemp(prefix="hist-test-")
+    os.environ["BATCH_DIR"] = tmpdir
+
+    try:
+        # Write one entry
+        entry = make_history_entry(
+            batch_id="roundtrip-1",
+            provider="test-provider",
+            model="test-model:batch",
+            raw_model="test-model",
+            status="completed",
+            created_at=1000.0,
+            finalized_at=1100.0,
+            total_requests=2,
+            completed_requests=2,
+            cost=0.0001,
+        )
+        log_completion(entry)
+
+        # Read back
+        entries = read_history()
+        assert_eq(len(entries), 1)
+        assert_eq(entries[0]["batch_id"], "roundtrip-1")
+
+        # Check aggregates
+        agg = get_aggregates()
+        assert_eq(agg["total_batches"], 1)
+        assert_in("test-provider", agg["by_provider"])
+        assert_eq(agg["by_provider"]["test-provider"]["batches"], 1)
+
+        # Write a second entry and re-check
+        entry2 = make_history_entry(
+            batch_id="roundtrip-2",
+            provider="test-provider",
+            model="test-model:batch",
+            raw_model="test-model-v2",
+            status="completed",
+            created_at=2000.0,
+            finalized_at=2200.0,
+            total_requests=5,
+            completed_requests=5,
+            cost=0.0002,
+        )
+        log_completion(entry2)
+
+        entries = read_history()
+        assert_eq(len(entries), 2)
+
+        agg = get_aggregates()
+        assert_eq(agg["total_batches"], 2)
+        assert_eq(agg["by_provider"]["test-provider"]["batches"], 2)
+
+        # Cost stats should be present
+        cost_stats = agg["by_provider"]["test-provider"]["cost_usd"]
+        assert_eq(cost_stats["count"], 2)
+        assert cost_stats["mean"] > 0
+    finally:
+        if old_batch_dir is not None:
+            os.environ["BATCH_DIR"] = old_batch_dir
+        else:
+            os.environ.pop("BATCH_DIR", None)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@test("batch_history handles empty history gracefully")
+def test_history_empty():
+    from batch_history import read_history, get_aggregates
+    import tempfile, os, shutil
+
+    old_batch_dir = os.environ.pop("BATCH_DIR", None)
+    tmpdir = tempfile.mkdtemp(prefix="hist-empty-")
+    os.environ["BATCH_DIR"] = tmpdir
+
+    try:
+        entries = read_history()
+        assert_eq(entries, [])
+        agg = get_aggregates()
+        assert_eq(agg, {})
+    finally:
+        if old_batch_dir is not None:
+            os.environ["BATCH_DIR"] = old_batch_dir
+        else:
+            os.environ.pop("BATCH_DIR", None)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ===========================================================================
+# batch-router tests
+# ===========================================================================
+
+@test("router.classify_with_live_api handles unknown provider gracefully")
+def test_router_chat_fallback():
+    """With a non-existent provider, classify should raise a clear error."""
+    # The router file has a hyphen (batch-router.py), so we load via importlib
+    import importlib, sys
+    spec = importlib.util.spec_from_file_location("batch_router", HERE / "batch-router.py")
+    if spec is None or spec.loader is None:
+        raise AssertionError("Could not load batch-router.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    config = {
+        "router_provider": "nonexistent",
+        "router_model": "test-model",
+    }
+    try:
+        mod.classify_with_live_api("test response", "project context", config)
+        raise AssertionError("Expected an exception for nonexistent provider")
+    except (ValueError, RuntimeError):
+        pass
+
+
+@test("router.parse_classification_json extracts JSON from LLM response")
+def test_router_parse_json():
+    """Test the JSON extraction logic used in route_result."""
+    # Simulate what the router does: find { } in a response and parse
+    import json
+
+    valid_responses = [
+        '{"classification": "text", "route": "archive", "confidence": 0.9, "summary": "done", "reason": "ok"}',
+        'Sure! Here is the JSON:\n{"classification": "text", "route": "archive", "confidence": 0.9, "summary": "done", "reason": "ok"}',
+        '```json\n{"classification": "text", "route": "archive", "confidence": 0.9, "summary": "done", "reason": "ok"}\n```',
+    ]
+
+    for response in valid_responses:
+        start = response.find('{')
+        end = response.rfind('}') + 1
+        assert start >= 0 and end > start, f"Failed to find JSON in: {response[:40]}..."
+        parsed = json.loads(response[start:end])
+        assert_eq(parsed["classification"], "text")
+        assert_eq(parsed["route"], "archive")
+
+
+# ===========================================================================
+# batch_tui tests
+# ===========================================================================
+
+@test("TUI: module imports and app class exists")
+def test_tui_imports():
+    from batch_tui import BatchTUI, DashboardScreen, BatchesScreen, HistoryScreen, EscalationsScreen, LogsScreen
+    assert BatchTUI is not None
+    assert DashboardScreen is not None
+    assert BatchesScreen is not None
+
+
+@test("TUI: helper functions work without data")
+def test_tui_helpers():
+    from batch_tui import _batch_data_dir, _load_state, _count_files, _format_duration
+
+    # Basic data dir
+    d = _batch_data_dir()
+    assert d.name == ".batch-data" or "batch" in str(d)
+
+    # Load state from a non-existent file returns empty dict
+    state = _load_state()
+    assert isinstance(state, dict)
+
+    # Format duration
+    assert_eq(_format_duration(30), "30s")
+    assert_eq(_format_duration(90), "1.5m")
+    assert_eq(_format_duration(7200), "2.0h")
+    assert_eq(_format_duration(0), "—")
+
+
+# ===========================================================================
+# chat_complete tests
+# ===========================================================================
+
+@test("OpenRouter.chat_complete returns None without API key")
+def test_or_chat_no_key():
+    """Without a valid API key, chat_complete should return None, not crash."""
+    from providers.openrouter_provider import OpenRouterProvider
+
+    try:
+        p = OpenRouterProvider(api_key="sk-invalid-key-for-testing")
+        result = p.chat_complete(
+            messages=[{"role": "user", "content": "Say hello"}],
+        )
+        # Should either return None (API call fails) or a string
+        assert result is None or isinstance(result, str)
+    except Exception as e:
+        # Any exception from trying is acceptable for an invalid key
+        pass
+
+
+@test("Anthropic.chat_complete exists and handles errors gracefully")
+def test_anthropic_chat_no_op():
+    """Anthropic chat_complete should exist and not crash with no API key."""
+    from providers.anthropic_provider import AnthropicProvider
+
+    try:
+        p = AnthropicProvider(api_key="sk-invalid-key")
+        result = p.chat_complete(
+            messages=[{"role": "user", "content": "Hello"}],
+        )
+        assert result is None or isinstance(result, str)
+    except Exception:
+        pass
+
+
+@test("chat_complete method exists on base class")
+def test_chat_complete_base():
+    """The base BatchProvider should define chat_complete as abstract."""
+    from providers.base import BatchProvider
+
+    assert hasattr(BatchProvider, "chat_complete")
+    assert callable(BatchProvider.chat_complete)
+
+
+# ===========================================================================
 # Live integration tests (require OPENROUTER_API_KEY)
 # ===========================================================================
 

@@ -115,6 +115,22 @@ class BatchProvider(ABC):
         """Cancel a running batch. Optional."""
         raise NotImplementedError(f"{self.get_provider_name()} does not support cancelling batches")
 
+    def chat_complete(self, messages: list[dict],
+                       model: Optional[str] = None,
+                       max_tokens: int = 512,
+                       temperature: float = 0.0) -> Optional[str]:
+        """
+        Synchronous live (non-batch) chat completion.
+
+        Used by the router for fast classification. Providers that support
+        live chat should override this. Returns the assistant's response
+        content string, or None on failure.
+        """
+        raise NotImplementedError(
+            f"{self.get_provider_name()} does not support live chat completion. "
+            "Override chat_complete() or route with a different provider."
+        )
+
     def get_endpoint_name(self) -> str:
         """Human-readable endpoint description."""
         return self.get_provider_name().capitalize()

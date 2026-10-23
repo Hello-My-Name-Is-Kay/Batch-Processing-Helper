@@ -58,13 +58,50 @@ class AnthropicProvider(BatchProvider):
             }
         }
 
+    def chat_complete(self, messages: list[dict],
+                       model: Optional[str] = None,
+                       max_tokens: int = 512,
+                       temperature: float = 0.0) -> Optional[str]:
+        """Synchronous live chat completion via Anthropic Messages API."""
+        if model is None:
+            model = os.environ.get("BATCH_MODEL", "claude-haiku-4-5-20251001")
+
+        # Separate system message from user/assistant messages
+        system = None
+        chat_messages = []
+        for msg in messages:
+            if msg.get("role") == "system":
+                system = msg["content"]
+            else:
+                chat_messages.append(msg)
+
+        if not chat_messages:
+            chat_messages = [{"role": "user", "content": "Hello"}]
+
+        kwargs = {
+            "model": model,
+            "messages": chat_messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if system:
+            kwargs["system"] = system
+
+        try:
+            response = self.client.messages.create(**kwargs)
+            if response.content:
+                return response.content[0].text
+        except Exception:
+            pass
+        return None
+
     def create_batch(self, requests: list[dict]) -> str:
         """Submit requests to Anthropic Batch API.
-        
+
         Args:
-            requests: List of dicts in Anthropic batch format 
+            requests: List of dicts in Anthropic batch format
                      (custom_id + params fields).
-        
+
         Returns:
             Batch ID string.
         """
@@ -100,8 +137,8 @@ class AnthropicProvider(BatchProvider):
                 "succeeded": batch.request_counts.succeeded if hasattr(batch.request_counts, 'succeeded') else 0,
                 "failed": batch.request_counts.failed if hasattr(batch.request_counts, 'failed') else 0,
             } if hasattr(batch, 'request_counts') else {},
-            "ended_at": batch.ended_at.isoformat() if hasattr(batch, 'ended_at') and batch.ended_at else None,
-            "created_at": batch.created_at.isoformat() if hasattr(batch, 'created_at') and batch.created_at else None,
+            "ended_at": batch.ended_at.isoformat() if hasattr(batch, 'ended_at') and batch.ended_at is not None and hasattr(batch.ended_at, 'isoformat') else (batch.ended_at if hasattr(batch, 'ended_at') else None),
+            "created_at": batch.created_at.isoformat() if hasattr(batch, 'created_at') and batch.created_at is not None and hasattr(batch.created_at, 'isoformat') else (batch.created_at if hasattr(batch, 'created_at') else None),
         }
 
         # Extract model from the first request if available

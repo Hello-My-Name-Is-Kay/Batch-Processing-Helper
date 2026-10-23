@@ -292,6 +292,40 @@ class OpenRouterProvider(BatchProvider):
 
         return batch_results
 
+    def chat_complete(self, messages: list[dict],
+                       model: Optional[str] = None,
+                       max_tokens: int = 512,
+                       temperature: float = 0.0) -> Optional[str]:
+        """Synchronous live chat completion via OpenRouter.
+
+        Uses the standard /v1/chat/completions endpoint (non-batch).
+        """
+        if model is None:
+            model = os.environ.get("OPENROUTER_BATCH_MODEL",
+                                   os.environ.get("BATCH_MODEL",
+                                                  "deepseek/deepseek-chat"))
+
+        url = f"{self.base_url}/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        resp = self.session.post(url, json=payload, timeout=DEFAULT_TIMEOUT)
+
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        choices = data.get("choices", [])
+        if not choices:
+            return None
+
+        message = choices[0].get("message", {})
+        return message.get("content")
+
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a running OpenRouter batch.
 
