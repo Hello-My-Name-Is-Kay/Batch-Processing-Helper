@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Display batch pipeline status with visual formatting."""
+"""Display batch pipeline status with visual formatting.
+
+Supports multiple providers. Reads from the shared .batch-state file.
+"""
 
 import json
 import sys
@@ -7,6 +10,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from time import time
+
 
 def load_config():
     """Load batch configuration."""
@@ -17,6 +21,7 @@ def load_config():
         'escalations_dir': os.environ.get('BATCH_ESCALATIONS_DIR'),
         'completed_dir': os.environ.get('BATCH_COMPLETED_DIR'),
     }
+
 
 def get_status_icon(status):
     """Return icon for status."""
@@ -29,6 +34,7 @@ def get_status_icon(status):
     }
     return icons.get(status, '❓')
 
+
 def format_duration(seconds):
     """Format seconds into readable duration."""
     if seconds < 60:
@@ -39,6 +45,7 @@ def format_duration(seconds):
     else:
         hours = seconds / 3600
         return f"{hours:.1f}h"
+
 
 def display_visual(config):
     """Display status with visual formatting."""
@@ -53,17 +60,31 @@ def display_visual(config):
         state = json.load(f)
 
     # Count items
-    requests_count = len(list(Path(config['requests_dir']).glob("*.jsonl"))) if Path(config['requests_dir']).exists() else 0
-    responses_count = len(list(Path(config['responses_dir']).glob("*.result"))) if Path(config['responses_dir']).exists() else 0
-    escalations_count = len(list(Path(config['escalations_dir']).glob("*.escalate"))) if Path(config['escalations_dir']).exists() else 0
-    completed_count = len(list(Path(config['completed_dir']).glob("*.done"))) if Path(config['completed_dir']).exists() else 0
+    base = Path(config['requests_dir']) if config['requests_dir'] else Path()
+    requests_count = len(list(base.glob("*.jsonl"))) if base.exists() else 0
+    base = Path(config['responses_dir']) if config['responses_dir'] else Path()
+    responses_count = len(list(base.glob("*.result"))) if base.exists() else 0
+    base = Path(config['escalations_dir']) if config['escalations_dir'] else Path()
+    escalations_count = len(list(base.glob("*.escalate"))) if base.exists() else 0
+    base = Path(config['completed_dir']) if config['completed_dir'] else Path()
+    completed_count = len(list(base.glob("*.done"))) if base.exists() else 0
 
     current_time = time()
+
+    # Count by provider
+    providers = set()
+    for batch_info in state.values():
+        provider = batch_info.get('provider', 'anthropic')
+        providers.add(provider)
+    provider_list = ", ".join(sorted(providers))
 
     # Header
     print("\n" + "="*70)
     print(" " * 15 + "🔄 BATCH PIPELINE STATUS")
     print("="*70)
+
+    # Provider info
+    print(f"\n  Providers: {provider_list}")
 
     # Summary
     print("\n📊 PIPELINE SUMMARY:")
@@ -75,9 +96,9 @@ def display_visual(config):
 
     # Status breakdown
     print("\n📋 BATCH DETAILS:")
-    print("-" * 70)
-    print(f"  {'STATUS':<12} {'ID':<9} {'AGE':<8} {'SUMMARY':<35}")
-    print("-" * 70)
+    print("-" * 80)
+    print(f"  {'STATUS':<12} {'PROVIDER':<12} {'ID':<9} {'AGE':<8} {'SUMMARY':<35}")
+    print("-" * 80)
 
     # Sort by status (running first, then completed, then others)
     status_order = {'running': 0, 'submitted': 1, 'completed': 2, 'failed': 3}
@@ -85,8 +106,9 @@ def display_visual(config):
                            key=lambda x: (status_order.get(x[1].get('status'), 99),
                                         -x[1].get('submitted_at_unix', 0)))
 
-    for batch_id, batch_info in sorted_batches[:10]:  # Show top 10
+    for batch_id, batch_info in sorted_batches[:15]:  # Show top 15
         status = batch_info.get('status', 'unknown')
+        provider = batch_info.get('provider', '?')[:10]
         req_id = batch_info.get('custom_id', 'unknown')[:8]
 
         # Calculate age
@@ -97,7 +119,7 @@ def display_visual(config):
         else:
             age_str = "?"
 
-        # Get summary (from latency if completed)
+        # Get summary
         if status == 'completed' and 'latency_minutes' in batch_info:
             summary = f"✅ {batch_info['latency_minutes']}m latency"
         elif status == 'running':
@@ -106,10 +128,10 @@ def display_visual(config):
             summary = f"{status.capitalize()}"
 
         icon = get_status_icon(status)
-        print(f"  {icon} {status:<10} {req_id:<9} {age_str:<8} {summary:<35}")
+        print(f"  {icon} {status:<10} {provider:<12} {req_id:<9} {age_str:<8} {summary:<35}")
 
-    if total_batches > 10:
-        print(f"  ... and {total_batches - 10} more")
+    if total_batches > 15:
+        print(f"  ... and {total_batches - 15} more")
 
     print("\n" + "="*70)
 
@@ -122,12 +144,22 @@ def display_visual(config):
             print("-" * 70)
             for esc_file in escalations[:5]:
                 req_id = esc_file.stem
-                print(f"  • {req_id}")
+                # Try to get provider info from escalation file
+                provider_info = ""
+                try:
+                    with open(esc_file, encoding='utf-8') as f:
+                        esc_data = json.load(f)
+                        provider_info = esc_data.get('provider', '')
+                except Exception:
+                    pass
+                prov_str = f" [{provider_info}]" if provider_info else ""
+                print(f"  • {req_id}{prov_str}")
             if len(escalations) > 5:
                 print(f"  ... and {len(escalations) - 5} more")
             print()
 
     print("="*70 + "\n")
+
 
 def display_json(config):
     """Display raw JSON output."""
@@ -148,35 +180,38 @@ def display_json(config):
         "batches": state,
         "summary": {
             "total": len(state),
-            "by_status": {}
+            "by_status": {},
+            "by_provider": {},
         }
     }
 
-    # Count by status
+    # Count by status and provider
     for batch_info in state.values():
         status = batch_info.get('status', 'unknown')
+        provider = batch_info.get('provider', 'unknown')
         output['summary']['by_status'][status] = output['summary']['by_status'].get(status, 0) + 1
+        output['summary']['by_provider'][provider] = output['summary']['by_provider'].get(provider, 0) + 1
 
     print(json.dumps(output, indent=2))
+
 
 if __name__ == "__main__":
     import os
     from pathlib import Path
 
-    # Load config from environment
     SCRIPT_DIR = Path(__file__).parent
-    config_path = SCRIPT_DIR / "batch-config.sh"
 
-    # Manual config (fallback)
+    # Load config from environment
     config = load_config()
 
-    # Use provided config or defaults
+    # Use provided config or defaults (inside project directory)
     if not config['state_file']:
-        config['state_file'] = os.path.expanduser('~/.claude/batch-pipeline/freedom-os/.batch-state')
-        config['requests_dir'] = os.path.expanduser('~/.claude/batch-pipeline/freedom-os/requests')
-        config['responses_dir'] = os.path.expanduser('~/.claude/batch-pipeline/freedom-os/responses')
-        config['escalations_dir'] = os.path.expanduser('~/.claude/batch-pipeline/freedom-os/escalations')
-        config['completed_dir'] = os.path.expanduser('~/.claude/batch-pipeline/freedom-os/completed')
+        default_batch_dir = SCRIPT_DIR / '.batch-data'
+        config['state_file'] = str(default_batch_dir / '.batch-state')
+        config['requests_dir'] = str(default_batch_dir / 'requests')
+        config['responses_dir'] = str(default_batch_dir / 'responses')
+        config['escalations_dir'] = str(default_batch_dir / 'escalations')
+        config['completed_dir'] = str(default_batch_dir / 'completed')
 
     # Check for --json flag
     if "--json" in sys.argv:

@@ -1,8 +1,8 @@
-# Claude Batch Processing — Setup & Installation
+# Batch Processing — Setup & Installation
 
-Asynchronous batch processing for Claude Code using the Anthropic Batch API.
+Multi-provider asynchronous batch processing for LLM APIs (Anthropic, OpenRouter, etc.).
 
-**What it is:** Infrastructure to submit work to the Anthropic Batch API, poll for results asynchronously, and route them (archive, escalate, or queue next step). ~50% cheaper than live API calls; ideal for async tasks.
+**What it is:** Infrastructure to submit work to any supported Batch API (Anthropic, OpenRouter), poll for results asynchronously, and route them (archive, escalate, or queue next step). ~50-80% cheaper than live API calls; ideal for async tasks.
 
 ## Quick Start
 
@@ -18,40 +18,71 @@ pip install -r requirements.txt
 
 ### 2. Set Your API Key
 
+Choose your provider:
+
+**Anthropic:**
 ```bash
 export ANTHROPIC_API_KEY="sk-..."
-# Or add to ~/.config/fish/config.fish (fish shell):
-# set -gx ANTHROPIC_API_KEY "sk-..."
+```
+
+**OpenRouter:**
+```bash
+export OPENROUTER_API_KEY="sk-..."
+export BATCH_PROVIDER=openrouter
+```
+
+Add to shell config (fish):
+```fish
+set -gx ANTHROPIC_API_KEY "sk-..."
+# or
+set -gx OPENROUTER_API_KEY "sk-..."
+set -gx BATCH_PROVIDER openrouter
 ```
 
 ### 3. Test
 
 ```bash
 source venv/bin/activate
-bash batch.sh send "Test message"
+
+# Test with Anthropic (default)
+bash batch.sh send "Test message from setup"
+bash batch.sh status
+
+# Test with OpenRouter
+bash batch.sh --provider openrouter send "Test via OpenRouter"
 bash batch.sh status
 ```
 
-### 4. Install Systemd Timer (Linux/macOS with systemd)
+### 4. Install Cron Timer (Linux/macOS)
 
 ```bash
-# Copy service files
-cp systemd/freedom-batch-poll.* ~/.config/systemd/user/
+# Run setup
+bash batch-orchestrator.sh setup-cron
 
-# Enable and start
+# Verify it's active
+crontab -l | grep batch-orchestrator
+```
+
+For systemd (alternative to cron):
+```bash
+cp systemd/*.service ~/.config/systemd/user/
+cp systemd/*.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable freedom-batch-poll.timer
 systemctl --user start freedom-batch-poll.timer
-
-# Check status
 systemctl --user status freedom-batch-poll.timer
 ```
 
 ## Usage
 
-**Submit work:**
+**Submit work (default provider):**
 ```bash
 bash batch.sh send "Describe your task here"
+```
+
+**Submit via OpenRouter with custom model:**
+```bash
+bash batch.sh --provider openrouter --model "openai/gpt-4o" send "Analyze this"
 ```
 
 **Check status:**
@@ -64,6 +95,11 @@ bash batch.sh status
 bash batch.sh escalations
 ```
 
+**View performance metrics:**
+```bash
+bash batch.sh metrics
+```
+
 **View logs:**
 ```bash
 tail logs/orchestrator.log
@@ -72,22 +108,29 @@ tail logs/poll.log
 
 ## How It Works
 
-1. **Submit:** `batch send` → request gets UUID → submitted to Anthropic Batch API
-2. **Poll:** Systemd timer (every 2 min) → checks for completed batches
-3. **Route:** Haiku classifier reads results → decides: archive, escalate, or queue next batch
+1. **Submit:** `batch send [--provider X]` → request gets UUID → provider-specific formatting → submitted to provider's Batch API
+2. **Poll:** Cron/systemd timer (every 2 min) → discovers provider from state file → checks for completed batches
+3. **Route:** LLM classifier reads results → decides: archive, escalate, or queue next batch
 4. **Escalations:** Items needing human decision in `escalations/` folder
 
 ## File Structure
 
 ```
 Claude-Batching/
-├── batch-submit.py         # Submit requests to Batch API
-├── batch-poll.py           # Poll for completions
+├── batch-submit.py         # Submit requests to provider's Batch API
+├── batch-poll.py           # Poll for completions (all providers)
 ├── batch-router.py         # Classify and route results
+├── batch-status.py         # Pipeline status display
+├── batch-metrics.py        # Performance metrics
 ├── batch.sh                # Bash wrapper (main command)
 ├── batch.fish              # Fish shell wrapper (alternative)
 ├── batch-config.sh         # Configuration (edit as needed)
-├── batch-orchestrator.sh   # Orchestrator (used by systemd timer)
+├── batch-orchestrator.sh   # Orchestrator (used by cron)
+├── providers/              # Provider abstraction layer
+│   ├── __init__.py         # Provider registry & factory
+│   ├── base.py             # Abstract base class
+│   ├── anthropic_provider.py  # Anthropic Batch API
+│   └── openrouter_provider.py # OpenRouter Batch API
 ├── requests/               # Queued requests
 ├── responses/              # Completed results
 ├── escalations/            # Awaiting human decision
@@ -95,43 +138,57 @@ Claude-Batching/
 ├── logs/                   # Pipeline logs
 ├── requirements.txt        # Python dependencies
 ├── PIPELINE.md             # Full pipeline documentation
+├── METRICS.md              # Performance tracking
 └── SETUP.md                # This file
 ```
 
 ## Configuration
 
-Edit `batch-config.sh` to change:
+Edit `batch-config.sh` or set environment variables:
 
 ```bash
-export BATCH_MODEL="claude-haiku-4-5-20251001"      # Model for work
-export ROUTER_MODEL="claude-haiku-4-5-20251001"     # Model for routing
-export BATCH_POLL_INTERVAL=120                      # Poll every 2 minutes
+# Provider
+export BATCH_PROVIDER="anthropic"                # anthropic or openrouter
+
+# Anthropic
+export ANTHROPIC_API_KEY="sk-..."                # Your Anthropic key
+export BATCH_MODEL="claude-haiku-4-5-20251001"   # Model for batch work
+
+# OpenRouter
+export OPENROUTER_API_KEY="sk-..."               # Your OpenRouter key
+export OPENROUTER_BATCH_MODEL=""                 # Override model for OpenRouter
+export OPENROUTER_REFERER=""                     # Identify your app
+export OPENROUTER_APP_NAME="batch-pipeline"      # Identify your app
+
+# Routing
+export ROUTER_MODEL="claude-haiku-4-5-20251001"   # Model for routing
+export PROJECT_DIR=""                              # Project context path
+
+# Timing
+export BATCH_POLL_INTERVAL=120                     # Poll every 2 minutes
 ```
 
 ## Environment Variables
 
-Required:
-- `ANTHROPIC_API_KEY` — Your Anthropic API key
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | For Anthropic | Your Anthropic API key |
+| `OPENROUTER_API_KEY` | For OpenRouter | Your OpenRouter API key |
+| `BATCH_PROVIDER` | Optional | Provider: `anthropic` (default) or `openrouter` |
+| `BATCH_MODEL` | Optional | Model for batch work (provider-specific) |
+| `BATCH_DIR` | Optional | Base directory for pipeline files |
+| `ROUTER_MODEL` | Optional | Model for routing classification |
 
-Auto-set by batch-config.sh:
-- `BATCH_DIR` — Base directory (`~/.claude/batch-pipeline/freedom-os/` or customized)
-- `BATCH_REQUESTS_DIR`, `BATCH_RESPONSES_DIR`, etc. — Subdirectories
+Auto-set by `batch-config.sh`:
+- `BATCH_DIR`, `BATCH_REQUESTS_DIR`, `BATCH_RESPONSES_DIR`, `BATCH_COMPLETED_DIR`, `BATCH_ESCALATIONS_DIR`, `BATCH_LOGS_DIR`, `BATCH_STATE`
 
 ## For macOS without systemd
 
-Use `launchd` instead of systemd:
+Use `launchd` instead of systemd (note: timers less reliable on macOS):
 
 ```bash
 # Create ~/Library/LaunchAgents/com.local.batch-poll.plist
-# Copy systemd timer logic to launchd format
-# Run: launchctl load ~/Library/LaunchAgents/com.local.batch-poll.plist
-```
-
-Or use `cron` (not as reliable but works):
-
-```bash
-# Add to crontab:
-# */2 * * * * cd /path/to/Claude-Batching && bash batch.sh poll
+# Or use cron as shown in section 4 above
 ```
 
 ## Troubleshooting
@@ -139,17 +196,25 @@ Or use `cron` (not as reliable but works):
 **"ModuleNotFoundError: No module named 'anthropic'"**
 ```bash
 source venv/bin/activate
-pip install anthropic
+pip install -r requirements.txt
 ```
 
+**"OPENROUTER_API_KEY is required"**
+- Set the key for your chosen provider
+- Verify with: `echo $OPENROUTER_API_KEY`
+
+**"ANTHROPIC_API_KEY is required"**
+- Set the key for your chosen provider
+- Verify with: `echo $ANTHROPIC_API_KEY`
+
 **"Could not resolve authentication method"**
-- Verify `ANTHROPIC_API_KEY` is set: `echo $ANTHROPIC_API_KEY`
-- Get a key from https://console.anthropic.com/keys
+- For Anthropic: Verify `ANTHROPIC_API_KEY` is set, get key from https://console.anthropic.com/keys
+- For OpenRouter: Verify `OPENROUTER_API_KEY` is set, get key from https://openrouter.ai/keys
 
 **No results after 10 minutes**
 - Check batch status: `bash batch.sh status`
 - View logs: `tail logs/poll.log`
-- Check systemd: `systemctl --user status freedom-batch-poll.service -n 20`
+- Check provider: `bash batch.sh providers`
 
 **Escalation not appearing**
 - Check folder: `ls escalations/`
@@ -162,16 +227,18 @@ To use this for your own project:
 1. Edit `batch-config.sh`:
    ```bash
    export BATCH_DIR="/path/to/your/project/.batch"
-   export FREEDOM_OS_DIR="/path/to/your/project"
+   export PROJECT_DIR="/path/to/your/project"
+   export PROJECT_CONTEXT_FILE="/path/to/your/project/CONTEXT.md"
    ```
 
 2. Customize `batch-router.py`:
-   - Change `load_project_context()` to read your project's docs
+   - The `load_project_context()` function reads your project's docs
    - Adjust classification logic for your task types
 
 3. Run:
    ```bash
    bash batch.sh send "Your task description"
+   bash batch.sh --provider openrouter send "Cross-provider task"
    ```
 
 ## License
@@ -182,4 +249,4 @@ Same as the parent project (check repository root).
 
 Issues: Report to the repository.
 
-Docs: See `PIPELINE.md` for full pipeline documentation and workflow examples.
+Docs: See `PIPELINE.md` for full pipeline architecture and `METRICS.md` for performance tracking.
