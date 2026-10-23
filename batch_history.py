@@ -65,6 +65,8 @@ HISTORY_ENTRY_SCHEMA = {
     "submitted_at_unix":  Optional[float],  # When we submitted
     "pipeline_latency":   Optional[float],  # Time from submit to completion
     "provider_backend":   Optional[str],    # e.g. "Sail Research" for OpenRouter
+    "agent":              Optional[str],    # Agent/source that submitted (R3)
+    "custom_ids":         Optional[list],   # All request IDs in this batch (R2)
 }
 
 
@@ -84,6 +86,8 @@ def make_history_entry(batch_id: str,
                        cost: Optional[float] = None,
                        submitted_at_unix: Optional[float] = None,
                        provider_backend: Optional[str] = None,
+                       agent: Optional[str] = None,
+                       custom_ids: Optional[list] = None,
                        **extra) -> dict:
     """Create a standardized history entry."""
     entry = {
@@ -105,6 +109,8 @@ def make_history_entry(batch_id: str,
         "submitted_at_unix": submitted_at_unix,
         "pipeline_latency": round(finalized_at - submitted_at_unix, 1) if finalized_at and submitted_at_unix else None,
         "provider_backend": provider_backend,
+        "agent": agent,
+        "custom_ids": custom_ids,
         "logged_at": time.time(),
     }
     # Remove None values that aren't meaningful

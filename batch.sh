@@ -23,9 +23,11 @@ cmd="${1:-help}"
 PROVIDER_FLAG=""
 MODEL_FLAG=""
 
-# Check for --provider or -p before the command
+# Check for flags before the command
 shift_args=0
 args=("$@")
+AGENT_FLAG=""
+DRY_RUN=""
 for i in "${!args[@]}"; do
     if [[ "${args[$i]}" == "--provider" || "${args[$i]}" == "-p" ]]; then
         if [[ $((i+1)) -lt ${#args[@]} ]]; then
@@ -38,6 +40,14 @@ for i in "${!args[@]}"; do
             MODEL_FLAG="${args[$i+1]}"
             shift_args=$((shift_args + 2))
         fi
+    elif [[ "${args[$i]}" == "--agent" || "${args[$i]}" == "-a" ]]; then
+        if [[ $((i+1)) -lt ${#args[@]} ]]; then
+            AGENT_FLAG="${args[$i+1]}"
+            shift_args=$((shift_args + 2))
+        fi
+    elif [[ "${args[$i]}" == "--dry-run" || "${args[$i]}" == "-n" ]]; then
+        DRY_RUN="--dry-run"
+        shift_args=$((shift_args + 1))
     else
         break
     fi
@@ -52,31 +62,39 @@ fi
 
 case "$cmd" in
     send)
-        if [ $# -lt 2 ]; then
-            echo "Usage: batch [--provider anthropic|openrouter] send '<message>' [system_message]" >&2
+        # Collect remaining positional args as messages (R1: multi-request)
+        MSG_ARGS=()
+        if [ $shift_args -gt 0 ]; then
+            for (( j=shift_args+1; j<${#args[@]}; j++ )); do
+                MSG_ARGS+=("${args[$j]}")
+            done
+        else
+            # No flags, all positional args starting from $2 are messages
+            for (( j=2; j<=$#; j++ )); do
+                MSG_ARGS+=("${!j}")
+            done
+        fi
+
+        if [ ${#MSG_ARGS[@]} -eq 0 ]; then
+            echo "Usage: batch [flags] send '<message>' [more messages...]" >&2
             echo ""
             echo "Examples:"
             echo "  batch send 'Write a summary'"
-            echo "  batch --provider openrouter send 'Analyze this code'"
-            echo "  batch -p openrouter -m 'openai/gpt-4o' send 'Task description'"
+            echo "  batch --provider openrouter send 'Task 1' 'Task 2' 'Task 3'"
+            echo "  batch -p openrouter -m 'deepseek/deepseek-v4.1-flash' send 'Task'"
+            echo "  batch --agent 'my-session' send 'Task'"
+            echo "  batch --dry-run send 'Task'"
             exit 1
         fi
-        
-        # Extract message and system_message from remaining args after flags
-        if [ $shift_args -gt 0 ]; then
-            user_msg="${args[$((shift_args+1))]:-}"
-            system_msg="${args[$((shift_args+2))]:-}"
-        else
-            user_msg="$2"
-            system_msg="${3:-}"
-        fi
-        
-        # Build provider args
+
+        # Build python args
         PY_ARGS=""
         [ -n "$PROVIDER_FLAG" ] && PY_ARGS="$PY_ARGS --provider $PROVIDER_FLAG"
         [ -n "$MODEL_FLAG" ] && PY_ARGS="$PY_ARGS --model $MODEL_FLAG"
-        
-        python3 -I "${SCRIPT_DIR}/batch-submit.py" $PY_ARGS "$user_msg" "$system_msg" | jq .
+        [ -n "$AGENT_FLAG" ] && PY_ARGS="$PY_ARGS --agent $AGENT_FLAG"
+        [ -n "$DRY_RUN" ] && PY_ARGS="$PY_ARGS $DRY_RUN"
+
+        python3 -I "${SCRIPT_DIR}/batch-submit.py" $PY_ARGS "${MSG_ARGS[@]}" | jq .
         echo ""
         echo "✓ Request queued. Check status with: batch status"
         ;;
@@ -145,9 +163,11 @@ case "$cmd" in
         echo "Global flags:"
         echo "  --provider, -p   Provider: anthropic (default), openrouter"
         echo "  --model, -m      Model name (provider-specific)"
+        echo "  --agent, -a      Agent/source identifier for batch ownership"
+        echo "  --dry-run, -n    Preview batch without submitting"
         echo ""
         echo "Commands:"
-        echo "  send '<msg>' [sys_msg]   Submit a batch request"
+        echo "  send '<msg>' [more...]   Submit one or more requests in a batch"
         echo "  poll                     Poll for completed batches"
         echo "  status                   Show pipeline status"
         echo "  escalations              View items needing review"
@@ -161,9 +181,11 @@ case "$cmd" in
         echo "Examples:"
         echo "  batch send 'Summarize this file'"
         echo "  batch --provider openrouter send 'Analyze code'"
-        echo "  batch -p openrouter -m 'openai/gpt-4o' send 'Task'"
+        echo "  batch -p openrouter -m 'deepseek/deepseek-v4.1-flash' send 'Task'"
+        echo "  batch send 'Task 1' 'Task 2' 'Task 3'     # multi-request batch"
+        echo "  batch --agent 'my-session' send 'Task'    # agent ownership"
+        echo "  batch --dry-run send 'Task'               # preview before sending"
         echo "  batch status"
-        echo "  batch tui                # Launch the TUI"
         ;;
     
     *)
