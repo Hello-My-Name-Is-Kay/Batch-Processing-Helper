@@ -1,0 +1,20 @@
+Claude Batch Processing Tool
+Ready for GitHub upload
+
+Contents:
+- Python batch submission/polling/routing scripts
+- Shell wrappers (bash, fish)
+- Systemd timer integration
+- Full documentation (README, SETUP, PIPELINE)
+- .gitignore (excludes sensitive files)
+
+What to do before uploading:
+1. Create LICENSE file (match parent project)
+2. Update README with correct repo URL
+3. Push to GitHub
+
+Status:
+✓ All scripts copied
+✓ Directories created
+✓ Documentation written
+✓ .gitignore in place
