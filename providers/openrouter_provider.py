@@ -1,25 +1,24 @@
 """OpenRouter Batch API provider.
 
-OpenRouter batch processing follows a similar pattern to OpenAI's batch API:
-- POST /v1/batch to submit a JSONL file of requests
-- GET /v1/batch/{id} to check status
-- GET /v1/batch/{id}/results to retrieve outputs
+OpenRouter's batch API:
+- POST /api/v1/batches  — create a batch (JSON body with endpoint, model, requests[])
+- GET  /api/v1/batches/{id}         — check status (results embedded when completed)
+- POST /api/v1/batches/{id}/cancel   — cancel running batch
 
-Each line in the JSONL uses OpenAI-compatible chat completions format:
+Each request in the array uses OpenAI-compatible chat completions format:
 {
   "custom_id": "request-1",
   "method": "POST",
   "url": "/v1/chat/completions",
   "body": { "model": "...", "messages": [...], "max_tokens": ... }
 }
+
+Requires OPENROUTER_API_KEY environment variable.
 """
 
 import os
 import json
-import io
-import time
-from typing import Optional, BinaryIO
-from pathlib import Path
+from typing import Optional
 import requests
 
 from .base import BatchProvider, BatchResult, BatchStatus
@@ -229,10 +228,6 @@ class OpenRouterProvider(BatchProvider):
         Returns:
             List of BatchResult objects.
         """
-        # Results are embedded in the batch object itself
-        batch_data = self.retrieve_batch(batch_id)
-
-        # Re-fetch the raw batch to get the full results array
         url = f"{self.base_url}/batches/{batch_id}"
         resp = self.session.get(url, timeout=DEFAULT_TIMEOUT)
 

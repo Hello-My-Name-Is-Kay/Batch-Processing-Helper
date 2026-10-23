@@ -24,8 +24,8 @@ from datetime import datetime
 from textual.app import App, ComposeResult
 from textual.screen import Screen
 from textual.widgets import (
-    Header, Footer, Static, DataTable, RichLog, Label,
-    TabbedContent, TabPane, Button, Input, Rule
+    Header, Footer, Static, DataTable, RichLog,
+    TabbedContent, TabPane, Rule
 )
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.binding import Binding
@@ -36,17 +36,12 @@ _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE))
 
 # Import project modules (best-effort)
-try:
-    from providers import get_provider, list_providers
-    _PROVIDERS_OK = True
-except Exception:
-    _PROVIDERS_OK = False
-
+_HISTORY_OK = False
 try:
     from batch_history import read_history, get_aggregates
     _HISTORY_OK = True
 except Exception:
-    _HISTORY_OK = False
+    pass
 
 
 # ═══════════════════════════════════════════════════════════════════
