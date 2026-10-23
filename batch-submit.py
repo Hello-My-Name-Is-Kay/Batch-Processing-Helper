@@ -53,15 +53,18 @@ Follow the project rules: no commits without explicit approval, leak-safe code, 
 
     batch_id = response.id
 
-    # Write request tracking file
+    # Write request tracking file with timing
     request_file = Path(config['requests_dir']) / f"{request_id}.jsonl"
-    with open(request_file, 'w') as f:
+    submission_time = datetime.now()
+    with open(request_file, 'w', encoding='utf-8') as f:
         json.dump({
             "custom_id": request_id,
             "batch_id": batch_id,
-            "submitted_at": datetime.now().isoformat(),
+            "submitted_at": submission_time.isoformat(),
+            "submitted_at_unix": submission_time.timestamp(),
             "user_message": user_message[:200],  # brief preview
-            "status": "submitted"
+            "status": "submitted",
+            "model": config['model']
         }, f)
 
     # Update state file with batch ID mapping
@@ -74,6 +77,7 @@ Follow the project rules: no commits without explicit approval, leak-safe code, 
     state[batch_id] = {
         "custom_id": request_id,
         "submitted_at": datetime.now().isoformat(),
+        "submitted_at_unix": submission_time.timestamp(),
         "status": "running"
     }
 

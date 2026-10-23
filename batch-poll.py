@@ -65,17 +65,25 @@ def poll_batches():
                 with open(response_file, 'w') as f:
                     json.dump(result_data, f, indent=2)
 
-                # Update state
+                # Update state with timing
+                completion_time = datetime.now()
                 state[batch_id]['status'] = 'completed'
-                state[batch_id]['completed_at'] = datetime.now().isoformat()
+                state[batch_id]['completed_at'] = completion_time.isoformat()
+                state[batch_id]['completed_at_unix'] = completion_time.timestamp()
+                # Calculate latency
+                if 'submitted_at_unix' in state[batch_id]:
+                    latency_seconds = completion_time.timestamp() - state[batch_id]['submitted_at_unix']
+                    state[batch_id]['latency_seconds'] = latency_seconds
+                    state[batch_id]['latency_minutes'] = round(latency_seconds / 60, 2)
 
                 completed_count += 1
 
-                # Log
-                log_msg = f"[{datetime.now().isoformat()}] {batch_id} completed → {response_file}"
+                # Log with latency
+                latency_str = f"{state[batch_id].get('latency_minutes', '?')} min"
+                log_msg = f"[{datetime.now().isoformat()}] {batch_id} completed in {latency_str} → {response_file}"
                 print(log_msg, file=sys.stderr)
 
-                with open(logs_dir / "poll.log", 'a') as f:
+                with open(logs_dir / "poll.log", 'a', encoding='utf-8') as f:
                     f.write(log_msg + "\n")
 
             elif batch.processing_status == "failed":

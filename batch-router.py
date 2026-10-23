@@ -34,8 +34,9 @@ def route_result(result_file):
     """Classify a batch result and decide routing."""
 
     config = load_config()
+    routing_start_time = datetime.now()
 
-    with open(result_file) as f:
+    with open(result_file, encoding='utf-8') as f:
         result = json.load(f)
 
     if not result or not isinstance(result, list) or len(result) == 0:
@@ -117,10 +118,12 @@ Routes:
     completed_dir = Path(config['completed_dir'])
     logs_dir = Path(config['logs_dir'])
 
+    routing_end_time = datetime.now()
     routing_result = {
         "request_id": request_id,
         "classification": classification,
-        "routed_at": datetime.now().isoformat()
+        "routed_at": routing_end_time.isoformat(),
+        "routing_time_ms": round((routing_end_time - routing_start_time).total_seconds() * 1000, 2)
     }
 
     route = classification.get('route', 'escalate')
@@ -128,29 +131,30 @@ Routes:
     if route == 'escalate' or route == 'action_needed':
         # Write to escalations
         escalation_file = escalations_dir / f"{request_id}.escalate"
-        with open(escalation_file, 'w') as f:
+        with open(escalation_file, 'w', encoding='utf-8') as f:
             json.dump({
                 "request_id": request_id,
                 "result_file": str(result_file),
                 "classification": classification,
                 "response": response_text,
-                "escalated_at": datetime.now().isoformat()
+                "escalated_at": datetime.now().isoformat(),
+                "routing_time_ms": routing_result["routing_time_ms"]
             }, f, indent=2)
         routing_result['action'] = f"escalated to {escalation_file}"
 
     elif route == 'archive':
         # Move to completed
         completed_file = completed_dir / f"{request_id}.done"
-        with open(completed_file, 'w') as f:
+        with open(completed_file, 'w', encoding='utf-8') as f:
             json.dump(routing_result, f)
         result_file.unlink()  # Remove result file
         routing_result['action'] = f"archived to {completed_file}"
 
-    # Log routing decision
-    log_msg = f"[{datetime.now().isoformat()}] {request_id} → {route} ({classification.get('summary', 'no summary')})"
+    # Log routing decision with timing
+    log_msg = f"[{datetime.now().isoformat()}] {request_id} → {route} ({routing_result['routing_time_ms']}ms) {classification.get('summary', 'no summary')}"
     print(log_msg, file=sys.stderr)
 
-    with open(logs_dir / "router.log", 'a') as f:
+    with open(logs_dir / "router.log", 'a', encoding='utf-8') as f:
         f.write(log_msg + "\n")
 
     return routing_result
