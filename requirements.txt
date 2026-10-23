@@ -8,3 +8,6 @@ requests>=2.28.0
 
 # Terminal UI (optional, for batch-tui)
 textual>=0.50.0
+
+# MCP server (optional, for batch-mcp.py)
+mcp>=1.0.0

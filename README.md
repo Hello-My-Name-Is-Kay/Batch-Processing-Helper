@@ -64,6 +64,8 @@ User Task  →  Provider Abstraction Layer  →  Batch API (Anthropic/OpenRouter
 - [Extending: Add a New Provider](#extending-add-a-new-provider)
 - [Logs & Audit](#logs--audit)
 - [Testing](#testing)
+- [MCP Server](#mcp-server-claude-desktop-cursor-vs-code-pi)
+- [Pi Skill](#pi-skill)
 - [Shell Prompt Integration](#shell-prompt-integration)
 - [Troubleshooting](#troubleshooting)
 
@@ -88,9 +90,11 @@ User Task  →  Provider Abstraction Layer  →  Batch API (Anthropic/OpenRouter
 - **History & analytics** (`batch_history.py`) — Persistent JSONL log of every completed batch; per-provider and per-model aggregates
 - **Provider abstraction** (`providers/`) — Common interface for all batch backends
 - **CLI wrappers** (`batch.sh`) — Easy commands to submit, check status, view history/stats, view escalations
+- **MCP server** (`batch-mcp.py`) — Exposes all operations as MCP tools for Claude Desktop, Cursor, VS Code, and pi
+- **Pi skill** — `.agents/skills/batch-processing/SKILL.md` auto-discovered by pi
 - **Systemd/cron integration** — Automatic polling every 2 minutes
 - **Logging & metrics** — Full audit trail and performance tracking per provider
-- **Test suite** (`test_batch_pipeline.py`) — 11 unit tests covering providers, pipeline, and history
+- **Test suite** (`test_batch_pipeline.py`) — 21 unit tests
 
 ## Quick Start
 
@@ -269,8 +273,11 @@ Batch-Processing-Helper/
 ├── batch-orchestrator.sh        # Systemd/cron integration
 ├── batch-config.sh              # Configuration (edit this)
 ├── batch_tui.py                 # ★ Interactive TUI (Textual-based, mouse+keyboard)
+├── batch-mcp.py                 # ★ MCP server (Claude Desktop, Cursor, pi)
 ├── poll_and_results.py          # Convenience: poll batch + retrieve results
-├── test_batch_pipeline.py       # ★ 11 unit tests
+├── test_batch_pipeline.py       # ★ 21 unit tests
+├── .agents/                     # ★ Pi skill (auto-discovered)
+│   └── skills/batch-processing/SKILL.md
 ├── providers/                   # ★ Provider abstraction layer
 │   ├── __init__.py              # Provider registry & factory
 │   ├── base.py                  # Abstract base class (BatchProvider)
@@ -458,6 +465,67 @@ Current test results: **11/11 passing** (2 live tests skipped without API key). 
 - Config loading
 - Pipeline graceful error handling
 - History module integration
+
+## MCP Server (Claude Desktop, Cursor, VS Code, Pi)
+
+`batch-mcp.py` exposes six tools via stdio MTP:
+
+| Tool | Description |
+|------|-------------|
+| `batch_send` | Submit a batch request (task, provider?, model?) |
+| `batch_status` | Current pipeline status with counts and recent activity |
+| `batch_history` | Recent completions with latency, cost, tokens |
+| `batch_stats` | Per-provider and per-model aggregates |
+| `batch_escalations` | Items awaiting human review |
+| `batch_poll` | Trigger a poll cycle |
+
+### Claude Desktop setup
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "batch-processing": {
+      "command": "python3",
+      "args": ["/path/to/Batch-Processing-Helper/batch-mcp.py"],
+      "env": {
+        "OPENROUTER_API_KEY": "${OPENROUTER_API_KEY}",
+        "BATCH_PROVIDER": "openrouter"
+      }
+    }
+  }
+}
+```
+
+### Pi setup
+
+```bash
+pi mcp add batch-processing -- python3 /path/to/Batch-Processing-Helper/batch-mcp.py
+```
+
+Tools appear as `mcp__batch_processing__batch_send`, etc.
+
+### Test from shell
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 batch-mcp.py
+```
+
+---
+
+## Pi Skill
+
+`.agents/skills/batch-processing/SKILL.md` is auto-discovered by pi when running from the project directory. It tells the agent:
+
+- When to use the batch pipeline (cost-sensitive or async LLM tasks)
+- How to submit, check status, view history and stats
+- How to launch the TUI
+- Provider configuration and common troubleshooting
+
+The skill is loaded into context **only when needed** — no prompt bloat.
+
+---
 
 ## Shell Prompt Integration
 
