@@ -32,22 +32,7 @@ case "$cmd" in
         echo "✓ Poll cycle complete"
         ;;
     status)
-        echo "=== Batch Pipeline Status ==="
-        echo "Requests:    $(find "$BATCH_REQUESTS_DIR" -name "*.jsonl" 2>/dev/null | wc -l)"
-        echo "Responses:   $(find "$BATCH_RESPONSES_DIR" -name "*.result" 2>/dev/null | wc -l)"
-        echo "Escalations: $(find "$BATCH_ESCALATIONS_DIR" -name "*.escalate" 2>/dev/null | wc -l)"
-        echo "Completed:   $(find "$BATCH_COMPLETED_DIR" -name "*.done" 2>/dev/null | wc -l)"
-        echo ""
-
-        # Show escalations if any
-        escalations=$(find "$BATCH_ESCALATIONS_DIR" -name "*.escalate" 2>/dev/null | head -5 || true)
-        if [ -n "$escalations" ]; then
-            echo "⚠  ESCALATIONS AWAITING REVIEW:"
-            while IFS= read -r f; do
-                req_id=$(basename "$f" .escalate)
-                echo "   $req_id"
-            done <<< "$escalations"
-        fi
+        python3 -I "${SCRIPT_DIR}/batch-status.py" "${@:2}"
         ;;
     escalations)
         bash "${SCRIPT_DIR}/batch-orchestrator.sh" escalations
