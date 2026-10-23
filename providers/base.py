@@ -1,23 +1,8 @@
 """Abstract base class for batch processing providers."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
-
-
-@dataclass
-class BatchRequest:
-    """Standardized batch request object.
-    
-    This is converted to provider-specific format by each provider.
-    """
-    custom_id: str
-    model: str
-    max_tokens: int = 2048
-    system_message: Optional[str] = None
-    messages: list[dict] = field(default_factory=list)
-    temperature: float = 0.0
-    extra_params: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -107,9 +92,9 @@ class BatchProvider(ABC):
             f"{self.get_provider_name()} must implement build_request()"
         )
 
-    def format_user_message(self, message: str) -> str:
-        """Optional formatting of user message before submission."""
-        return message
+    def default_model(self) -> Optional[str]:
+        """Model used when the caller does not pick one (None: no default)."""
+        return None
 
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a running batch. Optional."""
@@ -124,7 +109,8 @@ class BatchProvider(ABC):
 
         Used by the router for fast classification. Providers that support
         live chat should override this. Returns the assistant's response
-        content string, or None on failure.
+        content string (None if the reply is empty) and raises on API errors,
+        so callers see why a call failed.
         """
         raise NotImplementedError(
             f"{self.get_provider_name()} does not support live chat completion. "

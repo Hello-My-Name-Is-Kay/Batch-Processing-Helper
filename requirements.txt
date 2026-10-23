@@ -1,13 +1,12 @@
 # Batch Pipeline Dependencies
+# The lower bounds are the oldest versions the test suite was run against.
+# Keep this list in step with `dependencies` in pyproject.toml (a test checks).
 
-# Core: Anthropic Batch API (required for anthropic provider)
-anthropic>=0.18.0
+# Anthropic provider (only imported when BATCH_PROVIDER=anthropic)
+anthropic>=0.40.0
 
-# OpenRouter Batch API (required for openrouter provider)
+# OpenRouter provider (only imported when BATCH_PROVIDER=openrouter)
 requests>=2.28.0
 
-# Terminal UI (optional, for batch-tui)
+# Terminal UI (batch.sh tui)
 textual>=0.50.0
-
-# MCP server (optional, for batch-mcp.py)
-mcp>=1.0.0

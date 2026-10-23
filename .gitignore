@@ -1,20 +1,5 @@
-# Runtime data (auto-created inside project)
+# Runtime data (created on first use)
 .batch-data/
-.batch-data/**
-!.batch-data/.gitkeep
-!.batch-data/history/.gitkeep
-
-# Legacy top-level runtime dirs (kept for compatibility)
-/requests/
-/responses/
-/completed/
-/escalations/
-/logs/
-!/requests/.gitkeep
-!/responses/.gitkeep
-!/completed/.gitkeep
-!/escalations/.gitkeep
-!/logs/.gitkeep
 
 # Python
 __pycache__/

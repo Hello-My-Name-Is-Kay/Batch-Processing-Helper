@@ -8,64 +8,50 @@ and model. Supports querying, aggregating, and analyzing historical data.
 History directory structure:
   .batch-data/history/
     history.jsonl          — Append-only log of every batch completion
-    history.db.json        — Pre-computed aggregates (refreshed on write)
+
+Aggregates (per provider and per model) are computed from that log when asked
+for, so there is no second copy to keep in step.
 """
 
 import json
-import os
-import sys
 import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 from collections import defaultdict
 
+from batch_common import batch_dir
+
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-def _get_history_dir() -> Path:
-    """Get the history directory (under .batch-data)."""
-    batch_dir = Path(os.environ.get("BATCH_DIR", 
-                    Path(__file__).parent / ".batch-data"))
-    hist_dir = batch_dir / "history"
-    hist_dir.mkdir(parents=True, exist_ok=True)
-    return hist_dir
-
-
 def _history_file() -> Path:
-    return _get_history_dir() / "history.jsonl"
+    return batch_dir() / "history" / "history.jsonl"
 
 
-def _aggregates_file() -> Path:
-    return _get_history_dir() / "history.db.json"
+def _to_unix(value) -> Optional[float]:
+    """Coerce a datetime, ISO-8601 string or number to a unix timestamp.
 
-
-# ---------------------------------------------------------------------------
-# Data model for a history entry
-# ---------------------------------------------------------------------------
-
-HISTORY_ENTRY_SCHEMA = {
-    "batch_id":           str,   # Provider's batch ID
-    "provider":           str,   # e.g. "openrouter", "anthropic"
-    "model":              str,   # Full model name including :batch suffix
-    "raw_model":          str,   # Model name as returned by provider
-    "status":             str,   # "completed", "failed"
-    "created_at":         float, # Unix timestamp of batch creation
-    "finalized_at":       float, # Unix timestamp of batch completion
-    "latency_seconds":    float, # finalized_at - created_at
-    "total_requests":     int,   # Number of requests in batch
-    "completed_requests": int,   # Number of successfully completed
-    "failed_requests":    int,   # Number of failed requests
-    "prompt_tokens":      Optional[int],
-    "completion_tokens":  Optional[int],
-    "total_tokens":       Optional[int],
-    "cost":               Optional[float],  # Provider cost in USD
-    "submitted_at_unix":  Optional[float],  # When we submitted
-    "pipeline_latency":   Optional[float],  # Time from submit to completion
-    "provider_backend":   Optional[str],    # e.g. "Sail Research" for OpenRouter
-}
+    Providers report batch times in different shapes; None means "unknown".
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, datetime):
+        return value.timestamp()
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
 
 
 def make_history_entry(batch_id: str,
@@ -86,6 +72,8 @@ def make_history_entry(batch_id: str,
                        provider_backend: Optional[str] = None,
                        **extra) -> dict:
     """Create a standardized history entry."""
+    created_at = _to_unix(created_at)
+    finalized_at = _to_unix(finalized_at)
     entry = {
         "batch_id": batch_id,
         "provider": provider,
@@ -118,10 +106,9 @@ def make_history_entry(batch_id: str,
 def log_completion(entry: dict) -> None:
     """Append a history entry to the JSONL log."""
     hist_file = _history_file()
+    hist_file.parent.mkdir(parents=True, exist_ok=True)
     with open(hist_file, "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, default=str) + "\n")
-    # Update aggregates
-    _update_aggregates()
 
 
 def read_history() -> list[dict]:
@@ -155,6 +142,7 @@ def _stats(vals: list[float]) -> dict:
         return {}
     vals = sorted(vals)
     n = len(vals)
+    middle = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2
     max_val = max(abs(v) for v in vals)
     if max_val < 0.01:
         precision = 8
@@ -167,89 +155,63 @@ def _stats(vals: list[float]) -> dict:
         "min": round(min(vals), precision),
         "max": round(max(vals), precision),
         "mean": round(sum(vals) / n, precision),
-        "median": round(vals[n // 2], precision),
+        "median": round(middle, precision),
         "sum": round(sum(vals), precision),
     }
 
 
-def _update_aggregates() -> None:
-    """Recompute and cache per-provider + per-model aggregates."""
-    entries = read_history()
-    if not entries:
-        return
+def _summarize(items: list, pipeline: bool = False) -> dict:
+    """Aggregate a group of history entries (latency, cost, tokens, optionally pipeline latency)."""
+    series = [("latency_seconds", "latency_seconds")]
+    if pipeline:
+        series.append(("pipeline_latency_seconds", "pipeline_latency"))
+    series += [("cost_usd", "cost"), ("tokens", "total_tokens")]
 
-    # Per-provider
-    by_provider = defaultdict(list)
-    # Per-model
-    by_model = defaultdict(list)
-
-    for e in entries:
-        prov = e.get("provider", "unknown")
-        by_provider[prov].append(e)
-        model_key = f"{prov}/{e.get('raw_model', e.get('model', 'unknown'))}"
-        by_model[model_key].append(e)
-
-    aggregates = {
-        "last_updated": time.time(),
-        "total_batches": len(entries),
-        "by_provider": {},
-        "by_model": {},
-    }
-
-    for prov, items in by_provider.items():
-        latencies = [e["latency_seconds"] for e in items if e.get("latency_seconds")]
-        costs = [e["cost"] for e in items if e.get("cost")]
-        tokens = [e["total_tokens"] for e in items if e.get("total_tokens")]
-        pipeline = [e["pipeline_latency"] for e in items if e.get("pipeline_latency")]
-
-        stats = {"batches": len(items)}
-        if latencies:
-            stats["latency_seconds"] = _stats(latencies)
-        if pipeline:
-            stats["pipeline_latency_seconds"] = _stats(pipeline)
-        if costs:
-            stats["cost_usd"] = _stats(costs)
-        if tokens:
-            stats["tokens"] = _stats(tokens)
-
-        aggregates["by_provider"][prov] = stats
-
-    for model_key, items in by_model.items():
-        latencies = [e["latency_seconds"] for e in items if e.get("latency_seconds")]
-        costs = [e["cost"] for e in items if e.get("cost")]
-        tokens = [e["total_tokens"] for e in items if e.get("total_tokens")]
-
-        stats = {"batches": len(items)}
-        if latencies:
-            stats["latency_seconds"] = _stats(latencies)
-        if costs:
-            stats["cost_usd"] = _stats(costs)
-        if tokens:
-            stats["tokens"] = _stats(tokens)
-
-        aggregates["by_model"][model_key] = stats
-
-    agg_file = _aggregates_file()
-    with open(agg_file, "w", encoding="utf-8") as f:
-        json.dump(aggregates, f, indent=2)
+    stats = {"batches": len(items)}
+    for out_key, field in series:
+        values = [e[field] for e in items if e.get(field)]
+        if values:
+            stats[out_key] = _stats(values)
+    return stats
 
 
 def get_aggregates() -> dict:
-    """Return cached aggregates (or recompute if missing)."""
-    agg_file = _aggregates_file()
-    if agg_file.exists():
-        with open(agg_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    _update_aggregates()
-    if agg_file.exists():
-        with open(agg_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    """Per-provider and per-model aggregates, computed from the history log ({} if it is empty)."""
+    entries = read_history()
+    if not entries:
+        return {}
+
+    by_provider = defaultdict(list)
+    by_model = defaultdict(list)
+    for e in entries:
+        prov = e.get("provider", "unknown")
+        by_provider[prov].append(e)
+        by_model[f"{prov}/{e.get('raw_model', e.get('model', 'unknown'))}"].append(e)
+
+    return {
+        "total_batches": len(entries),
+        "by_provider": {prov: _summarize(items, pipeline=True) for prov, items in by_provider.items()},
+        "by_model": {key: _summarize(items) for key, items in by_model.items()},
+    }
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _print_stats(stats: dict) -> None:
+    """Print one aggregate block (a provider's or a model's)."""
+    print(f"    Batches: {stats.get('batches', 0)}")
+    if "latency_seconds" in stats:
+        lat = stats["latency_seconds"]
+        print(f"    Latency:  min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s  median={lat['median']}s")
+    if "cost_usd" in stats:
+        c = stats["cost_usd"]
+        print(f"    Cost:     min=${c['min']:.6f}  mean=${c['mean']:.6f}  total=${c['sum']:.4f}")
+    if "tokens" in stats:
+        t = stats["tokens"]
+        print(f"    Tokens:   mean={t['mean']:.0f}  total={t['sum']:,.0f}")
+
 
 def cli() -> None:
     import argparse
@@ -257,63 +219,21 @@ def cli() -> None:
         description="Batch processing history and metrics")
     sub = parser.add_subparsers(dest="command")
 
-    # log
-    log_p = sub.add_parser("log", help="Log a batch completion (called by poll.py)")
-    log_p.add_argument("--batch-id", required=True)
-    log_p.add_argument("--provider", required=True)
-    log_p.add_argument("--model", required=True)
-    log_p.add_argument("--raw-model", default="")
-    log_p.add_argument("--status", default="completed")
-    log_p.add_argument("--created-at", type=float, required=True)
-    log_p.add_argument("--finalized-at", type=float, required=True)
-    log_p.add_argument("--total-requests", type=int, required=True)
-    log_p.add_argument("--completed-requests", type=int, required=True)
-    log_p.add_argument("--failed-requests", type=int, default=0)
-    log_p.add_argument("--prompt-tokens", type=int, default=None)
-    log_p.add_argument("--completion-tokens", type=int, default=None)
-    log_p.add_argument("--total-tokens", type=int, default=None)
-    log_p.add_argument("--cost", type=float, default=None)
-    log_p.add_argument("--submitted-at", type=float, default=None)
-    log_p.add_argument("--provider-backend", default=None)
+    # list (and its alias "show")
+    list_args = argparse.ArgumentParser(add_help=False)
+    list_args.add_argument("--limit", type=int, default=10)
+    list_args.add_argument("--provider", default=None)
+    list_args.add_argument("--model", default=None)
+    sub.add_parser("list", parents=[list_args], help="List recent history")
+    sub.add_parser("show", parents=[list_args], help="Alias for list")
 
-    # list
-    list_p = sub.add_parser("list", help="List recent history")
-    list_p.add_argument("--limit", type=int, default=10)
-    list_p.add_argument("--provider", default=None)
-    list_p.add_argument("--model", default=None)
-
-    # stats
-    stats_p = sub.add_parser("stats", help="Show aggregates per provider/model")
-
-    # show (aliases)
-    sub.add_parser("show", help="Alias for list --limit 10")
+    # stats (and its alias "aggregates")
+    sub.add_parser("stats", help="Show aggregates per provider/model")
     sub.add_parser("aggregates", help="Alias for stats")
 
     args = parser.parse_args()
 
-    if args.command == "log":
-        entry = make_history_entry(
-            batch_id=args.batch_id,
-            provider=args.provider,
-            model=args.model,
-            raw_model=args.raw_model or args.model,
-            status=args.status,
-            created_at=args.created_at,
-            finalized_at=args.finalized_at,
-            total_requests=args.total_requests,
-            completed_requests=args.completed_requests,
-            failed_requests=args.failed_requests,
-            prompt_tokens=args.prompt_tokens,
-            completion_tokens=args.completion_tokens,
-            total_tokens=args.total_tokens,
-            cost=args.cost,
-            submitted_at_unix=args.submitted_at,
-            provider_backend=args.provider_backend,
-        )
-        log_completion(entry)
-        print(json.dumps(entry, indent=2))
-
-    elif args.command in ("list", "show"):
+    if args.command in ("list", "show"):
         entries = read_history()
         provider = args.provider
         model = args.model
@@ -349,22 +269,21 @@ def cli() -> None:
             return
 
         print(f"\n{'='*70}")
-        print(f"  Batch Processing Aggregates")
+        print("  Batch Processing Aggregates")
         print(f"  Total batches: {agg.get('total_batches', 0)}")
         print(f"{'='*70}")
 
         for prov, stats in agg.get("by_provider", {}).items():
             print(f"\n  Provider: {prov}")
-            print(f"    Batches: {stats.get('batches', 0)}")
-            if "latency_seconds" in stats:
-                lat = stats["latency_seconds"]
-                print(f"    Latency:  min={lat['min']}s  mean={lat['mean']}s  max={lat['max']}s  median={lat['median']}s")
-            if "cost_usd" in stats:
-                c = stats["cost_usd"]
-                print(f"    Cost:     min=${c['min']:.6f}  mean=${c['mean']:.6f}  total=${c['sum']:.4f}")
-            if "tokens" in stats:
-                t = stats["tokens"]
-                print(f"    Tokens:   mean={t['mean']:.0f}  total={t['sum']:,.0f}")
+            _print_stats(stats)
+
+        by_model = agg.get("by_model", {})
+        if by_model:
+            print(f"\n{'-'*70}")
+            print("  By model")
+            for model_key, stats in by_model.items():
+                print(f"\n  Model: {model_key}")
+                _print_stats(stats)
 
         print(f"\n{'='*70}\n")
 
