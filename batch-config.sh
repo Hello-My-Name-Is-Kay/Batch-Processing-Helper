@@ -46,6 +46,24 @@ export BATCH_POLL_INTERVAL=${BATCH_POLL_INTERVAL:-120}  # seconds
 export PROJECT_DIR="${PROJECT_DIR:-}"
 export PROJECT_CONTEXT_FILE="${PROJECT_CONTEXT_FILE:-}"
 
+# ── Validate API keys ──
+case "${BATCH_PROVIDER}" in
+    anthropic)
+        if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set." >&2
+            echo "   Set it in your shell rc or export it:" >&2
+            echo "     export ANTHROPIC_API_KEY='sk-...'" >&2
+        fi
+        ;;
+    openrouter)
+        if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=openrouter but OPENROUTER_API_KEY is not set." >&2
+            echo "   Set it in your shell rc or export it:" >&2
+            echo "     export OPENROUTER_API_KEY='sk-...'" >&2
+        fi
+        ;;
+esac
+
 # Ensure directories exist
 mkdir -p "$BATCH_REQUESTS_DIR" "$BATCH_RESPONSES_DIR" "$BATCH_COMPLETED_DIR" \
          "$BATCH_ESCALATIONS_DIR" "$BATCH_LOGS_DIR"

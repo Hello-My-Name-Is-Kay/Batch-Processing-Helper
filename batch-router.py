@@ -11,6 +11,7 @@ import json
 import sys
 import os
 import re
+import time
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -102,16 +103,23 @@ Routes:
 - live_model: needs immediate live model response
 """
 
-    # Use the provider to make a live chat call
     provider = get_provider(router_provider)
-    
-    # Build a single-turn "live" message using the provider's format
-    # For the router, we build a request and submit it as a single-item batch,
-    # then poll for the result (simplest cross-provider approach).
-    # 
-    # Better: use the provider's native live API if available.
-    # For now, we submit as a tiny batch and wait.
-    
+
+    # Try live chat completion first (fast path — milliseconds)
+    messages = [
+        {"role": "user", "content": classification_prompt},
+    ]
+
+    response = provider.chat_complete(
+        messages=messages,
+        model=router_model,
+        max_tokens=512,
+    )
+
+    if response is not None:
+        return response
+
+    # Fallback: if the provider doesn't support live chat, try batch
     router_request = provider.build_request(
         custom_id="router-classification",
         user_message=classification_prompt,
@@ -119,13 +127,11 @@ Routes:
         model=router_model,
         max_tokens=512,
     )
-    
-    # Submit as a batch
+
     batch_id = provider.create_batch([router_request])
-    
-    # Poll until done (should be quick for a single small request)
+
     import time
-    max_wait = 30  # seconds
+    max_wait = 60
     waited = 0
     while waited < max_wait:
         status = provider.retrieve_batch(batch_id)
@@ -133,18 +139,16 @@ Routes:
             break
         elif status['status'] == BatchStatus.FAILED:
             raise RuntimeError(f"Router classification batch failed: {status.get('errors', 'unknown')}")
-        time.sleep(1)
-        waited += 1
-    
+        time.sleep(2)
+        waited += 2
+
     if waited >= max_wait:
         raise TimeoutError("Router classification timed out")
-    
-    # Get results
+
     results = provider.get_results(batch_id)
-    
     if not results:
         raise RuntimeError("No results from router classification")
-    
+
     return results[0].content
 
 

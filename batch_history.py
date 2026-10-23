@@ -145,6 +145,33 @@ def read_history() -> list[dict]:
 # Aggregates
 # ---------------------------------------------------------------------------
 
+def _stats(vals: list[float]) -> dict:
+    """Compute summary statistics with adaptive precision.
+
+    Uses more decimal places for very small values (e.g. costs)
+    so that sub-cent amounts aren't lost to rounding.
+    """
+    if not vals:
+        return {}
+    vals = sorted(vals)
+    n = len(vals)
+    max_val = max(abs(v) for v in vals)
+    if max_val < 0.01:
+        precision = 8
+    elif max_val < 1:
+        precision = 6
+    else:
+        precision = 2
+    return {
+        "count": n,
+        "min": round(min(vals), precision),
+        "max": round(max(vals), precision),
+        "mean": round(sum(vals) / n, precision),
+        "median": round(vals[n // 2], precision),
+        "sum": round(sum(vals), precision),
+    }
+
+
 def _update_aggregates() -> None:
     """Recompute and cache per-provider + per-model aggregates."""
     entries = read_history()
@@ -161,20 +188,6 @@ def _update_aggregates() -> None:
         by_provider[prov].append(e)
         model_key = f"{prov}/{e.get('raw_model', e.get('model', 'unknown'))}"
         by_model[model_key].append(e)
-
-    def _stats(vals: list[float]) -> dict:
-        if not vals:
-            return {}
-        vals = sorted(vals)
-        n = len(vals)
-        return {
-            "count": n,
-            "min": round(min(vals), 2),
-            "max": round(max(vals), 2),
-            "mean": round(sum(vals) / n, 2),
-            "median": round(vals[n // 2], 2),
-            "sum": round(sum(vals), 2),
-        }
 
     aggregates = {
         "last_updated": time.time(),
