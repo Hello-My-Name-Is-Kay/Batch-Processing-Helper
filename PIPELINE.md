@@ -1,264 +1,105 @@
-# Multi-Provider Batch Pipeline
+# How the pipeline works
 
-Asynchronous batch processing for LLM APIs — Anthropic, OpenRouter, and beyond.
+Internals for people who want to read or extend the code. For installing and using it, see the [README](README.md).
 
-## Architecture
+## Stages
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      batch.sh / batch.fish                       │
-│                     (CLI wrapper, dispatch)                      │
-└─────────────────────────┬───────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      batch-config.sh                             │
-│              (provider, model, paths, API keys)                  │
-└──────────┬──────────────────────────┬──────────────────────────┘
-           │                          │
-           ▼                          ▼
-┌──────────────────────┐   ┌──────────────────────┐
-│  batch-submit.py      │   │  batch-poll.py        │
-│  (create batches)     │   │  (poll + fetch)       │
-└──────────┬───────────┘   └──────────┬───────────┘
-           │                          │
-           ▼                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    providers/ abstraction layer                   │
-│                                                                   │
-│  ┌────────────────────┐   ┌────────────────────┐                 │
-│  │ AnthropicProvider   │   │ OpenRouterProvider  │  ← add yours  │
-│  │ (anthropic SDK)     │   │ (HTTP + JSONL)      │               │
-│  └────────┬───────────┘   └────────┬───────────┘                 │
-│           │                        │                             │
-│           ▼                        ▼                             │
-│  Anthropic Batch API        OpenRouter Batch API                 │
-└─────────────────────────────────────────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      batch-router.py                              │
-│              (classify + route results to archive/escalate)      │
-└─────────────────────────────────────────────────────────────────┘
+batch.sh send / send-file
+        │  batch-submit.py: check ids, key and folders → build requests → create ONE batch
+        ▼
+   provider batch API  (Anthropic or OpenRouter)
+        │
+        │  cron → batch-orchestrator.sh poll
+        ▼
+   batch-poll.py: ask about every unfinished batch → download results → record history
+        │          writes responses/<id>.result
+        ▼
+   batch-router.py: classify each result with a live LLM call
+                    → completed/<request>.done        (archived)
+                    → escalations/<request>.escalate  (needs a person)
+                    → responses/<id>.result is renamed <id>.routed
 ```
 
-## How it works
+| Folder (under `.batch-data/`) | Holds |
+|---|---|
+| `requests/` | One tracking file per submission: `<id>.jsonl` (a single JSON object) |
+| `responses/` | `<id>.result` waiting to be routed, then `<id>.routed` |
+| `completed/` | `<request>.done`: archive record of a routed result |
+| `escalations/` | `<request>.escalate`: result plus the classifier's verdict |
+| `history/` | `history.jsonl`: one line per collected batch |
+| `logs/` | `orchestrator.log`, `poll.log`, `router.log` |
+| `.batch-state` | Every batch and its status (below) |
 
-1. **Submit** a request via `batch.sh send` or `batch-submit.py`
-   - Provider abstraction converts to provider-specific JSON format
-   - Request gets a UUID
-   - Submitted to the chosen provider's Batch API
-   - Tracking file written to `requests/` with provider metadata
+`<id>` is the batch's tracking id; each request inside a batch has its own `<request>` id (the same as `<id>` for a single prompt, `<id>-0001`, `<id>-0002`, … for a `send-file` batch).
 
-2. **Poll** (runs automatically every 2 minutes via cron/systemd)
-   - Checks all pending batches (across all providers)
-   - For each provider, uses the correct API to check status
-   - When complete, fetches results and writes to `responses/`
+## State file
 
-3. **Route** (automatic, after poll)
-   - Classifier (live API call) reads response
-   - Classifies: text, question, error, action_needed, ready_to_commit
-   - Routes to: archive, escalate, batch_again, live_model
-
-4. **Escalations**
-   - Results needing human decision written to `escalations/`
-   - You see them when checking status
-   - Decide action and file away
-
-## Provider Architecture
-
-### Provider Interface (`providers/base.py`)
-
-Every provider must implement:
-
-```python
-class BatchProvider(ABC):
-    def create_batch(self, requests: list[dict]) -> str:
-        """Submit batch, return batch_id."""
-        
-    def retrieve_batch(self, batch_id: str) -> dict:
-        """Get batch status. Return {id, status, ...}."""
-        
-    def get_results(self, batch_id: str) -> list[BatchResult]:
-        """Fetch completed results."""
-        
-    def build_request(self, custom_id, user_message, ...) -> dict:
-        """Build provider-specific request dict."""
-        
-    def get_provider_name(self) -> str:
-        """Return provider name string."""
-```
-
-### Anthropic Provider (`providers/anthropic_provider.py`)
-
-- Uses official `anthropic` Python SDK
-- Request format: `{custom_id, params: {model, max_tokens, system, messages}}`
-- API key: `ANTHROPIC_API_KEY`
-- Endpoint: Anthropic Batch API (`claude.beta.messages.batches`)
-
-### OpenRouter Provider (`providers/openrouter_provider.py`)
-
-- Uses direct HTTP requests (`requests` library)
-- Request format: OpenAI-compatible JSONL (`{custom_id, method, url, body}`)
-- API key: `OPENROUTER_API_KEY`
-- Endpoint: `https://openrouter.ai/api/v1/batch`
-- Supports 200+ models from all major providers
-
-### How to Add a New Provider
-
-1. Create `providers/myprovider.py`:
-
-```python
-from .base import BatchProvider, BatchResult, BatchStatus
-
-class MyProvider(BatchProvider):
-    def get_provider_name(self): return "myprovider"
-    
-    def build_request(self, custom_id, user_message, system_message=None, 
-                      model=None, max_tokens=2048, temperature=0.0):
-        return { ... provider format ... }
-    
-    def create_batch(self, requests):
-        # Submit to MyProvider's batch API
-        return batch_id
-    
-    def retrieve_batch(self, batch_id):
-        return {"id": batch_id, "status": ..., ...}
-    
-    def get_results(self, batch_id):
-        return [BatchResult(...)]
-```
-
-2. Register in `providers/__init__.py`:
-```python
-from .myprovider import MyProvider
-_PROVIDERS["myprovider"] = MyProvider
-```
-
-3. Add config to `batch-config.sh`:
-```bash
-export MYPROVIDER_API_KEY="${MYPROVIDER_API_KEY:-}"
-```
-
-## Pipeline Data Flow
-
-### Submission (batch-submit.py)
-```
-User message
-  → build_request() converts to provider format
-  → Provider.create_batch() → API returns batch_id
-  → Write tracking file {custom_id, batch_id, provider, ...}
-  → Update .batch-state with {batch_id: {custom_id, provider, status, ...}}
-```
-
-### Polling (batch-poll.py)
-```
-Read .batch-state
-  → Group by provider
-  → For each pending batch:
-    → Provider.retrieve_batch(batch_id)
-    → If completed: Provider.get_results(batch_id)
-    → Write response file → Update .batch-state
-```
-
-### Routing (batch-router.py)
-```
-Read response file
-  → Send content to classifier (live API via provider)
-  → Parse JSON classification
-  → Route decision:
-    'archive'  → Write .done file, remove .result
-    'escalate' → Write .escalate file
-    'batch_again' → Re-submit as new batch
-```
-
-## State File Format
-
-The `.batch-state` file tracks all batches across providers:
+`.batch-state` maps provider batch ids to their status:
 
 ```json
 {
-  "anthro_batch_01abc...": {
-    "custom_id": "uuid-here",
+  "msgbatch_01abc...": {
+    "custom_id": "6f1c...",
     "provider": "anthropic",
-    "submitted_at": "2026-01-15T10:30:00",
-    "submitted_at_unix": 1705312200.0,
-    "status": "completed",
     "model": "claude-haiku-4-5-20251001",
-    "completed_at": "2026-01-15T10:45:00",
+    "status": "completed",
+    "submitted_at_unix": 1705312200.0,
     "completed_at_unix": 1705313100.0,
     "latency_seconds": 900.0,
-    "latency_minutes": 15.0
-  },
-  "batch_xyz789...": {
-    "custom_id": "uuid-here",
-    "provider": "openrouter",
-    "submitted_at": "2026-01-15T11:00:00",
-    "submitted_at_unix": 1705314000.0,
-    "status": "running",
-    "model": "openai/gpt-4o"
+    "request_counts": {"total": 3, "completed": 3, "failed": 0}
   }
 }
 ```
 
-## Provider-Specific Models
+`status` is `running` until the poller sees the batch finish, then `completed`, `failed` or `cancelled`. Finished batches are not asked about again.
 
-### Anthropic models
-```
-claude-haiku-4-5-20251001    (default, cheapest)
-claude-sonnet-4-20250514     (best for complex work)
-claude-3-opus-20240229       (heaviest, deprecated)
-```
+Every write goes through `batch_common.update_state()`: it takes a file lock, re-reads the file, applies the change and replaces the file atomically. The poller keeps its own copy while it talks to the providers and merges only what it changed, so a `send` that happens during a poll is not lost. A state file that is not valid JSON is moved to `.batch-state.corrupt-<time>`. The lock is `fcntl`-based (Linux and macOS).
 
-### OpenRouter models (200+ available)
-```
-anthropic/claude-3.5-sonnet       # Claude via OpenRouter
-anthropic/claude-3.5-haiku        # Cheaper Claude
-openai/gpt-4o                     # GPT-4o
-openai/gpt-4o-mini                # Cheaper GPT-4o
-google/gemini-2.0-flash-001       # Gemini Flash
-google/gemini-2.0-pro-001         # Gemini Pro
-meta-llama/llama-3.3-70b-instruct # Llama 3
-mistralai/mistral-large-2411      # Mistral
-deepseek/deepseek-chat            # DeepSeek
-```
+## Routing rules
 
-See all models: https://openrouter.ai/models
+The classifier returns a classification and a route as JSON. The result text is fenced as untrusted data in the prompt, and the pipeline applies its own rules on top:
 
-## Request Matching
+- Only `archive` and `escalate` exist. Any other route is escalated.
+- Only a result classified `text` is archived. If the classifier says `archive` for anything else (`question`, `error`, `action_needed`, `ready_to_commit`), it is escalated and the original route is kept in the escalation as `original_route`.
+- If the classification call fails, or the reply cannot be parsed, the result is escalated with the reason.
+- A batch with several requests is classified one result at a time.
 
-Every request gets a UUID (`custom_id`). Batch API returns results unordered, but matched via `custom_id` → `request_id` → tracking file. The `provider` field ensures we use the correct API for polling.
+## Provider interface
 
-## Routing Decisions
+`providers/base.py` defines `BatchProvider`. A provider implements:
 
-**Classifications:**
-- **text** — plain output, archive it
-- **question** — needs clarification, escalate to user
-- **error** — batch failed, escalate
-- **action_needed** — requires human decision, escalate
-- **ready_to_commit** — work complete, escalate for approval
+| Method | Purpose |
+|---|---|
+| `get_provider_name()` | `"anthropic"`, `"openrouter"`, … |
+| `default_model()` | Model used when none is given (optional; `None` if the provider has no default) |
+| `build_request(custom_id, user_message, system_message, model, ...)` | Provider-specific request dict |
+| `create_batch(requests)` | Submit; return the batch id |
+| `retrieve_batch(batch_id)` | Return `{id, status, raw_status, request_counts, created_at, ended_at, ...}`; `status` is a `BatchStatus` value; times are unix seconds |
+| `get_results(batch_id)` | List of `BatchResult` (`status` is `completed` or `failed`) |
+| `chat_complete(messages, model, ...)` | Live call used by the router; raises on API errors |
 
-**Routes:**
-- **archive** — task done, move to completed
-- **escalate** — needs human review
-- **batch_again** — ready for next async batch step
-- **live_model** — needs immediate response
+`retrieve_batch()` may also return `model`, `usage` (token counts and cost) and `provider_backend` for the history; when `usage` is missing the poller sums the tokens from the results.
+
+### Adding a provider
+
+1. Create `providers/myprovider.py` with a `BatchProvider` subclass (`providers/openrouter_provider.py` is a complete example).
+2. Register it in `providers/__init__.py` as `module name` and `class name`; the module is imported only when the provider is used:
+   ```python
+   _PROVIDERS["myprovider"] = (".myprovider", "MyProvider")
+   ```
+3. Add its environment variables to `batch-config.sh` (and `.env.example`).
 
 ## Logs
 
-All logs include provider context:
+Every line carries the provider:
+
 ```bash
-tail -f logs/orchestrator.log
-tail -f logs/poll.log        # Shows [anthropic] or [openrouter] tags
-tail -f logs/router.log      # Shows provider of classified result
+tail -f .batch-data/logs/orchestrator.log   # cron runs and Python errors
+tail -f .batch-data/logs/poll.log           # [anthropic] / [openrouter] batch events
+tail -f .batch-data/logs/router.log         # one line per routed result
 ```
 
-## Disable
+## Turning it off
 
-Remove cron job:
-```bash
-crontab -e
-# Delete the batch-orchestrator.sh line
-```
-
-Or just stop sending requests; the pipeline will go idle.
+Remove the cron entry with `crontab -e` (delete the line that runs this project's `batch-orchestrator.sh`), or just stop sending requests; the pipeline goes idle.

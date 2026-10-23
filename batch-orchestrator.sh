@@ -1,14 +1,16 @@
 #!/bin/bash
 # Batch pipeline orchestrator: polls, processes, routes, checks for escalations
 # Multi-provider support (anthropic, openrouter, etc.)
+#
+# Also what cron runs, so it must not depend on your interactive shell:
+# API keys come from the environment or .env (see batch-config.sh), Python is
+# the project's venv when present, and Python's error output goes to
+# logs/orchestrator.log instead of being thrown away.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/batch-config.sh"
-
-# Ensure Python scripts are executable
-chmod +x "${SCRIPT_DIR}"/{batch-submit,batch-poll,batch-router}.py 2>/dev/null || true
 
 log_msg() {
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] $*" >> "${BATCH_LOGS_DIR}/orchestrator.log"
@@ -18,17 +20,19 @@ poll_and_process() {
     local provider="${1:-}"
     log_msg "Starting batch poll cycle (provider: ${provider:-all})..."
 
-    POLL_ARGS=""
-    [ -n "$provider" ] && POLL_ARGS="--provider $provider"
+    local poll_args=()
+    [ -n "$provider" ] && poll_args+=(--provider "$provider")
 
-    # Poll for completed batches
-    python3 -I "${SCRIPT_DIR}/batch-poll.py" $POLL_ARGS > /dev/null 2>&1 || {
+    # Poll for completed batches (stdout is just a JSON summary; errors go to the log)
+    "$BATCH_PYTHON" "${SCRIPT_DIR}/batch-poll.py" ${poll_args[@]+"${poll_args[@]}"} \
+        > /dev/null 2>> "${BATCH_LOGS_DIR}/orchestrator.log" || {
         log_msg "Poll failed: $?"
         return 1
     }
 
     # Route completed results
-    python3 -I "${SCRIPT_DIR}/batch-router.py" $POLL_ARGS > /dev/null 2>&1 || {
+    "$BATCH_PYTHON" "${SCRIPT_DIR}/batch-router.py" ${poll_args[@]+"${poll_args[@]}"} \
+        > /dev/null 2>> "${BATCH_LOGS_DIR}/orchestrator.log" || {
         log_msg "Routing failed: $?"
         return 1
     }
@@ -48,21 +52,36 @@ poll_and_process() {
 setup_cron() {
     log_msg "Setting up cron job..."
 
-    cron_job="*/2 * * * * cd ${SCRIPT_DIR} && ${SCRIPT_DIR}/batch-orchestrator.sh poll > /dev/null 2>&1"
+    # Cron works in whole minutes: round BATCH_POLL_INTERVAL (seconds) up.
+    case "$BATCH_POLL_INTERVAL" in
+        ''|*[!0-9]*)
+            echo "BATCH_POLL_INTERVAL must be a whole number of seconds (got '$BATCH_POLL_INTERVAL')" >&2
+            return 1
+            ;;
+    esac
+    local minutes=$(( (BATCH_POLL_INTERVAL + 59) / 60 ))
+    [ "$minutes" -lt 1 ] && minutes=1
+    [ "$minutes" -gt 59 ] && minutes=59
 
-    # Check if already in crontab
-    if crontab -l 2>/dev/null | grep -F "batch-orchestrator.sh poll" > /dev/null; then
-        log_msg "Cron job already installed"
-        return 0
-    fi
+    # Quote the paths (they may contain spaces) and escape % (cron treats it as a newline).
+    local script_q dir_q
+    script_q="$(printf '%q' "${SCRIPT_DIR}/batch-orchestrator.sh")"
+    dir_q="$(printf '%q' "${SCRIPT_DIR}")"
+    local cron_job="*/${minutes} * * * * cd ${dir_q} && ${script_q} poll > /dev/null 2>&1"
+    cron_job="${cron_job//%/\\%}"
 
-    # Add to crontab
-    (crontab -l 2>/dev/null || echo "") | grep -v "batch-orchestrator.sh" | {
-        cat
-        echo "$cron_job"
+    # Replace this project's own entry (if any) and keep every other line,
+    # including entries for other copies of this tool.
+    local existing filtered
+    existing="$(crontab -l 2>/dev/null || true)"
+    filtered="$(printf '%s\n' "$existing" | grep -vF -- "${script_q} poll" || true)"
+
+    {
+        [ -n "$filtered" ] && printf '%s\n' "$filtered"
+        printf '%s\n' "$cron_job"
     } | crontab -
 
-    log_msg "✓ Cron job installed (every 2 minutes)"
+    log_msg "✓ Cron job installed (every ${minutes} minute(s))"
 }
 
 check_escalations() {
@@ -116,10 +135,10 @@ case "${1:-status}" in
     status)
         log_msg "Pipeline status check"
         echo "Batch Provider: ${BATCH_PROVIDER:-anthropic}"
-        echo "Requests: $(find "${BATCH_REQUESTS_DIR}" -name "*.jsonl" 2>/dev/null | wc -l)"
-        echo "Responses: $(find "${BATCH_RESPONSES_DIR}" -name "*.result" 2>/dev/null | wc -l)"
+        echo "Requests submitted: $(find "${BATCH_REQUESTS_DIR}" -name "*.jsonl" 2>/dev/null | wc -l)"
+        echo "Results awaiting routing: $(find "${BATCH_RESPONSES_DIR}" -name "*.result" 2>/dev/null | wc -l)"
         echo "Escalations: $(find "${BATCH_ESCALATIONS_DIR}" -name "*.escalate" 2>/dev/null | wc -l)"
-        echo "Completed: $(find "${BATCH_COMPLETED_DIR}" -name "*.done" 2>/dev/null | wc -l)"
+        echo "Archived: $(find "${BATCH_COMPLETED_DIR}" -name "*.done" 2>/dev/null | wc -l)"
         check_escalations
         ;;
     *)
@@ -127,7 +146,7 @@ case "${1:-status}" in
         echo ""
         echo "Commands:"
         echo "  poll [provider]    Poll for completions (all providers if unspecified)"
-        echo "  setup-cron         Install 2-min cron job"
+        echo "  setup-cron         Install the cron job (interval from BATCH_POLL_INTERVAL)"
         echo "  escalations        Check for items needing review"
         echo "  status             Pipeline status"
         exit 1

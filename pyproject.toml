@@ -1,0 +1,28 @@
+# Project metadata and tool settings.
+#
+# This project runs from a checkout (bash batch.sh ...); it is not meant to be
+# pip-installed. Install its dependencies with:  pip install -r requirements.txt
+# requirements.txt repeats the dependency list below; a test keeps them in step.
+
+[project]
+name = "batch-processing-helper"
+version = "0.1.0"
+description = "Async batch-processing pipeline for LLM work: submit to the Anthropic or OpenRouter batch APIs, poll in the background, classify each result with an LLM, and record cost and latency."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "anthropic>=0.40.0",
+    "requests>=2.28.0",
+    "textual>=0.50.0",
+]
+
+[project.urls]
+Repository = "https://github.com/Hello-My-Name-Is-Kay/Batch-Processing-Helper"
+
+[tool.ruff]
+# Python 3.9 is the oldest supported version, so rules that need newer syntax
+# (for example B905, zip(strict=...)) do not apply.
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["F", "E9", "B"]

@@ -6,21 +6,11 @@ Supports multiple providers. Reads from the shared .batch-state file.
 
 import json
 import sys
-import os
 from pathlib import Path
 from datetime import datetime
 from time import time
 
-
-def load_config():
-    """Load batch configuration."""
-    return {
-        'state_file': os.environ.get('BATCH_STATE'),
-        'requests_dir': os.environ.get('BATCH_REQUESTS_DIR'),
-        'responses_dir': os.environ.get('BATCH_RESPONSES_DIR'),
-        'escalations_dir': os.environ.get('BATCH_ESCALATIONS_DIR'),
-        'completed_dir': os.environ.get('BATCH_COMPLETED_DIR'),
-    }
+from batch_common import format_duration, pipeline_counts, resolve_paths
 
 
 def get_status_icon(status):
@@ -30,21 +20,10 @@ def get_status_icon(status):
         'running': '⏳',
         'completed': '✅',
         'failed': '❌',
+        'cancelled': '🚫',
         'escalation': '⚠️ ',
     }
     return icons.get(status, '❓')
-
-
-def format_duration(seconds):
-    """Format seconds into readable duration."""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        minutes = seconds / 60
-        return f"{minutes:.1f}m"
-    else:
-        hours = seconds / 3600
-        return f"{hours:.1f}h"
 
 
 def display_visual(config):
@@ -59,15 +38,7 @@ def display_visual(config):
     with open(state_file, encoding='utf-8') as f:
         state = json.load(f)
 
-    # Count items
-    base = Path(config['requests_dir']) if config['requests_dir'] else Path()
-    requests_count = len(list(base.glob("*.jsonl"))) if base.exists() else 0
-    base = Path(config['responses_dir']) if config['responses_dir'] else Path()
-    responses_count = len(list(base.glob("*.result"))) if base.exists() else 0
-    base = Path(config['escalations_dir']) if config['escalations_dir'] else Path()
-    escalations_count = len(list(base.glob("*.escalate"))) if base.exists() else 0
-    base = Path(config['completed_dir']) if config['completed_dir'] else Path()
-    completed_count = len(list(base.glob("*.done"))) if base.exists() else 0
+    counts = pipeline_counts()
 
     current_time = time()
 
@@ -88,8 +59,9 @@ def display_visual(config):
 
     # Summary
     print("\n📊 PIPELINE SUMMARY:")
-    print(f"  {requests_count:3d} 📤 Queued        {responses_count:3d} ⏳ Processing")
-    print(f"  {completed_count:3d} ✅ Completed     {escalations_count:3d} ⚠️  Escalations")
+    print(f"  {counts['running']:3d} ⏳ Running        {counts['completed']:3d} ✅ Collected")
+    print(f"  {counts['awaiting_routing']:3d} 📥 To route       {counts['escalations']:3d} ⚠️  Escalations")
+    print(f"  {counts['archived']:3d} 🗄  Archived       {counts['failed'] + counts['cancelled']:3d} ❌ Failed/cancelled")
 
     total_batches = len(state)
     print(f"\n  Total Batches: {total_batches}")
@@ -101,12 +73,12 @@ def display_visual(config):
     print("-" * 80)
 
     # Sort by status (running first, then completed, then others)
-    status_order = {'running': 0, 'submitted': 1, 'completed': 2, 'failed': 3}
+    status_order = {'running': 0, 'submitted': 1, 'completed': 2, 'failed': 3, 'cancelled': 4}
     sorted_batches = sorted(state.items(),
                            key=lambda x: (status_order.get(x[1].get('status'), 99),
                                         -x[1].get('submitted_at_unix', 0)))
 
-    for batch_id, batch_info in sorted_batches[:15]:  # Show top 15
+    for _, batch_info in sorted_batches[:15]:  # Show top 15
         status = batch_info.get('status', 'unknown')
         provider = batch_info.get('provider', '?')[:10]
         req_id = batch_info.get('custom_id', 'unknown')[:8]
@@ -196,22 +168,7 @@ def display_json(config):
 
 
 if __name__ == "__main__":
-    import os
-    from pathlib import Path
-
-    SCRIPT_DIR = Path(__file__).parent
-
-    # Load config from environment
-    config = load_config()
-
-    # Use provided config or defaults (inside project directory)
-    if not config['state_file']:
-        default_batch_dir = SCRIPT_DIR / '.batch-data'
-        config['state_file'] = str(default_batch_dir / '.batch-state')
-        config['requests_dir'] = str(default_batch_dir / 'requests')
-        config['responses_dir'] = str(default_batch_dir / 'responses')
-        config['escalations_dir'] = str(default_batch_dir / 'escalations')
-        config['completed_dir'] = str(default_batch_dir / 'completed')
+    config = resolve_paths()
 
     # Check for --json flag
     if "--json" in sys.argv:
