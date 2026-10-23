@@ -4,6 +4,11 @@
 Supports multiple providers. Metrics are per-provider and aggregated.
 """
 
+from pathlib import Path
+_HERE = Path(__file__).parent.resolve()
+import sys
+sys.path.insert(0, str(_HERE))
+
 import json
 import sys
 import os

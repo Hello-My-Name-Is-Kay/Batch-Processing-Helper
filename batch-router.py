@@ -7,6 +7,11 @@ and decide whether to archive, escalate, or queue next step.
 Supports multiple LLM providers for routing via the providers/ layer.
 """
 
+from pathlib import Path
+_HERE = Path(__file__).parent.resolve()
+import sys
+sys.path.insert(0, str(_HERE))
+
 import json
 import sys
 import os
