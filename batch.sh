@@ -52,6 +52,9 @@ case "$cmd" in
     escalations)
         bash "${SCRIPT_DIR}/batch-orchestrator.sh" escalations
         ;;
+    metrics)
+        python3 -I "${SCRIPT_DIR}/batch-metrics.py" "${@:2}"
+        ;;
     logs)
         log_file="${BATCH_LOGS_DIR}/orchestrator.log"
         if [ -f "$log_file" ]; then
@@ -62,7 +65,7 @@ case "$cmd" in
         ;;
     *)
         echo "Unknown command: $cmd" >&2
-        echo "Usage: batch {send|poll|status|escalations|logs}" >&2
+        echo "Usage: batch {send|poll|status|escalations|metrics|logs}" >&2
         exit 1
         ;;
 esac
