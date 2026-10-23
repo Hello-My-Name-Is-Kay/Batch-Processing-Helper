@@ -516,14 +516,28 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 batch-mcp.py
 
 ## Pi Skill
 
-`.agents/skills/batch-processing/SKILL.md` is auto-discovered by pi when running from the project directory. It tells the agent:
+The skill at `.agents/skills/batch-processing/SKILL.md` tells pi when and how to use the batch pipeline. It's loaded **only when relevant** — no prompt bloat.
+
+### Local (project-only) — auto-discovered
+
+Just run pi from the project directory. Pi discovers `.agents/skills/` when [project trust](https://pi-docs) is granted.
+
+### Global (any directory, any pi process)
+
+```bash
+# Symlink the skill into your user-level skills directory
+mkdir -p ~/.agents/skills
+ln -s "$PWD/.agents/skills/batch-processing" ~/.agents/skills/batch-processing
+```
+
+Now the skill is available from **any directory, any pi process**, including parallel sessions elsewhere on your filesystem. Pi scans `~/.agents/skills/` at startup.
+
+### What the skill covers
 
 - When to use the batch pipeline (cost-sensitive or async LLM tasks)
 - How to submit, check status, view history and stats
 - How to launch the TUI
 - Provider configuration and common troubleshooting
-
-The skill is loaded into context **only when needed** — no prompt bloat.
 
 ---
 
