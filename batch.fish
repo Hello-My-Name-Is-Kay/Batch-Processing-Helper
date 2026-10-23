@@ -1,76 +1,112 @@
 #!/usr/bin/env fish
-# Freedom-OS Batch Pipeline wrapper (fish shell)
-# Activates venv and runs batch commands
+# Batch Pipeline wrapper (fish shell)
+# Multi-provider support: anthropic (default), openrouter
 
-set -l VENV_DIR (dirname (dirname (dirname (realpath (status current-filename))))); /venv
 set -l SCRIPT_DIR (dirname (realpath (status current-filename)))
-set -l BATCH_CONFIG "$SCRIPT_DIR/batch-config.sh"
+set -l VENV_DIR "$SCRIPT_DIR/venv"
 
 # Activate venv
-source $VENV_DIR/bin/activate.fish
-
-# Load batch config
-export BATCH_DIR="$HOME/.claude/batch-pipeline/freedom-os"
-export BATCH_REQUESTS_DIR="$BATCH_DIR/requests"
-export BATCH_RESPONSES_DIR="$BATCH_DIR/responses"
-export BATCH_COMPLETED_DIR="$BATCH_DIR/completed"
-export BATCH_ESCALATIONS_DIR="$BATCH_DIR/escalations"
-export BATCH_LOGS_DIR="$BATCH_DIR/logs"
-export BATCH_STATE="$BATCH_DIR/.batch-state"
-export FREEDOM_OS_DIR="$HOME/Projects/Freedom-OS"
-export BATCH_MODEL="claude-haiku-4-5-20251001"
-export ROUTER_MODEL="claude-haiku-4-5-20251001"
-
-# Route commands
-switch (count $argv)
-    case 0
-        echo "Freedom-OS Batch Pipeline"
-        echo ""
-        echo "Usage: batch send '<message>' [system_message]"
-        echo "       batch status"
-        echo "       batch poll"
-        echo "       batch escalations"
-        echo "       batch logs"
-        exit 0
+if test -f "$VENV_DIR/bin/activate.fish"
+    source "$VENV_DIR/bin/activate.fish"
 end
 
-set -l cmd $argv[1]
+# Load batch config
+source "$SCRIPT_DIR/batch-config.sh"
+
+# Parse global flags
+set -l PROVIDER_FLAG ""
+set -l MODEL_FLAG ""
+set -l EXTRA_ARGS
+
+set -l i 1
+while test $i -le (count $argv)
+    switch $argv[$i]
+        case --provider -p
+            set i (math $i + 1)
+            if test $i -le (count $argv)
+                set PROVIDER_FLAG $argv[$i]
+                set -gx BATCH_PROVIDER $PROVIDER_FLAG
+            end
+        case --model -m
+            set i (math $i + 1)
+            if test $i -le (count $argv)
+                set MODEL_FLAG $argv[$i]
+            end
+        case '--*' '-*'
+            # Unknown flag, pass through
+            set -a EXTRA_ARGS $argv[$i]
+        case '*'
+            # Command or argument
+            set -a EXTRA_ARGS $argv[$i]
+    end
+    set i (math $i + 1)
+end
+
+# Route commands
+if test (count $EXTRA_ARGS) -eq 0
+    echo "Batch Pipeline — Multi-Provider Batch Processing"
+    echo ""
+    echo "Usage: batch [--provider PROVIDER] COMMAND [args...]"
+    echo ""
+    echo "Global flags:"
+    echo "  --provider, -p   Provider: anthropic (default), openrouter"
+    echo "  --model, -m      Model name (provider-specific)"
+    echo ""
+    echo "Commands:"
+    echo "  send '<msg>' [sys_msg]   Submit a batch request"
+    echo "  poll                     Poll for completed batches"
+    echo "  status                   Show pipeline status"
+    echo "  escalations              View items needing review"
+    echo "  metrics [--json FILE]    Show performance metrics"
+    echo "  logs                     View recent logs"
+    echo "  providers                List available providers"
+    echo ""
+    echo "Examples:"
+    echo "  batch send 'Summarize this file'"
+    echo "  batch --provider openrouter send 'Analyze code'"
+    echo "  batch -p openrouter -m 'openai/gpt-4o' send 'Task'"
+    exit 0
+end
+
+set -l cmd $EXTRA_ARGS[1]
+
+# Build Python args
+set -l PY_ARGS ""
+if test -n "$PROVIDER_FLAG"
+    set PY_ARGS "$PY_ARGS --provider $PROVIDER_FLAG"
+end
+if test -n "$MODEL_FLAG"
+    set PY_ARGS "$PY_ARGS --model $MODEL_FLAG"
+end
 
 switch $cmd
     case send
-        if test (count $argv) -lt 2
-            echo "Usage: batch send '<message>' [system_message]" >&2
+        if test (count $EXTRA_ARGS) -lt 2
+            echo "Usage: batch [--provider PROVIDER] send '<message>' [system_message]" >&2
             exit 1
         end
-        python3 -I "$SCRIPT_DIR/batch-submit.py" "$argv[2]" "$argv[3]" \
+        
+        set -l user_msg $EXTRA_ARGS[2]
+        set -l system_msg $EXTRA_ARGS[3]
+        
+        python3 -I "$SCRIPT_DIR/batch-submit.py" $PY_ARGS "$user_msg" "$system_msg" \
             | jq .
         echo ""
         echo "✓ Request queued. Check status with: batch status"
 
     case poll
-        python3 -I "$SCRIPT_DIR/batch-poll.py"
-        python3 -I "$SCRIPT_DIR/batch-router.py"
+        python3 -I "$SCRIPT_DIR/batch-poll.py" $PY_ARGS
+        python3 -I "$SCRIPT_DIR/batch-router.py" $PY_ARGS
+        echo "✓ Poll cycle complete"
 
     case status
-        echo "=== Batch Pipeline Status ==="
-        echo "Requests:    $(find $BATCH_REQUESTS_DIR -name '*.jsonl' 2>/dev/null | wc -l)"
-        echo "Responses:   $(find $BATCH_RESPONSES_DIR -name '*.result' 2>/dev/null | wc -l)"
-        echo "Escalations: $(find $BATCH_ESCALATIONS_DIR -name '*.escalate' 2>/dev/null | wc -l)"
-        echo "Completed:   $(find $BATCH_COMPLETED_DIR -name '*.done' 2>/dev/null | wc -l)"
-        echo ""
-
-        # Show escalations if any
-        set -l escalations (find $BATCH_ESCALATIONS_DIR -name '*.escalate' 2>/dev/null)
-        if test -n "$escalations"
-            echo "⚠  ESCALATIONS AWAITING REVIEW:"
-            for f in $escalations
-                set -l req_id (basename $f .escalate)
-                echo "   $req_id"
-            end
-        end
+        python3 -I "$SCRIPT_DIR/batch-status.py" $EXTRA_ARGS[2..-1]
 
     case escalations
         bash "$SCRIPT_DIR/batch-orchestrator.sh" escalations
+
+    case metrics
+        python3 -I "$SCRIPT_DIR/batch-metrics.py" $EXTRA_ARGS[2..-1]
 
     case logs
         set -l log_file "$BATCH_LOGS_DIR/orchestrator.log"
@@ -79,6 +115,16 @@ switch $cmd
         else
             echo "No logs yet"
         end
+
+    case providers
+        echo "Available batch providers:"
+        echo "  anthropic   - Anthropic Batch API (default)"
+        echo "  openrouter  - OpenRouter Batch API"
+        echo ""
+        echo "Set provider via: set -gx BATCH_PROVIDER openrouter"
+        echo "Or per-command:  batch --provider openrouter send 'Task'"
+        echo ""
+        echo "Current: BATCH_PROVIDER=$BATCH_PROVIDER"
 
     case '*'
         echo "Unknown command: $cmd" >&2

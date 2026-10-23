@@ -1,11 +1,20 @@
-# Sensitive and runtime files
-.batch-state
-.batch-state.*.json
-requests/*.jsonl
-responses/*.result
-completed/*.done
-escalations/*.escalate
-logs/*.log
+# Runtime data (auto-created inside project)
+.batch-data/
+.batch-data/**
+!.batch-data/.gitkeep
+!.batch-data/history/.gitkeep
+
+# Legacy top-level runtime dirs (kept for compatibility)
+/requests/
+/responses/
+/completed/
+/escalations/
+/logs/
+!/requests/.gitkeep
+!/responses/.gitkeep
+!/completed/.gitkeep
+!/escalations/.gitkeep
+!/logs/.gitkeep
 
 # Python
 __pycache__/
