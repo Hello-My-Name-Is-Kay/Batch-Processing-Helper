@@ -1,0 +1,31 @@
+# Sensitive and runtime files
+.batch-state
+.batch-state.*.json
+requests/*.jsonl
+responses/*.result
+completed/*.done
+escalations/*.escalate
+logs/*.log
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.env
+.env.local
+
+# Runtime state (ephemeral)
+*.pid
+*.lock
