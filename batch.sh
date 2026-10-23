@@ -103,7 +103,10 @@ case "$cmd" in
         ;;
     
     history|hist)
-        python3 -I "${SCRIPT_DIR}/batch_history.py" list --limit "${2:-10}"
+        # Extract limit from remaining args (after flags have been shifted)
+        _lim="${args[$((shift_args+1))]:-10}"
+        python3 -I "${SCRIPT_DIR}/batch_history.py" list --limit "$_lim"
+        unset _lim
         ;;
     
     stats)
