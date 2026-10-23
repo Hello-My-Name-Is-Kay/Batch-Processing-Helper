@@ -26,10 +26,14 @@ User Task  →  Provider Abstraction Layer  →  Batch API (Anthropic/OpenRouter
 ### What it demonstrates
 
 - **Pluggable provider architecture** — Abstract base class (`BatchProvider`) with concrete implementations for Anthropic and OpenRouter. Adding a new provider is one file + one line of registration.
+- **Multi-request batches (R1)** — Send any number of tasks in a single API batch. All requests share one batch lifecycle, reducing overhead and cost.
+- **Per-request IDs (R2)** — Each request gets a unique `custom_id` (e.g. `batch-0000`, `batch-0001`). Results carry the same ID back, so you can trace which response matches which request.
+- **Agent ownership (R3)** — Every batch can be tagged with an `--agent` identifier. The agent follows the batch through state, history, and logs — enabling multi-agent workflows where each pi session owns its batches.
+- **Pre-submit review (R4)** — `--dry-run` previews the batch JSON (requests, IDs, model, agent) without sending it. You inspect, edit the command, and re-run.
 - **Asynchronous pipeline design** — Submit → poll (via cron/systemd) → fetch → classify → route, with UUID-based tracking across all stages.
 - **Cross-provider compatibility** — Normalizes different batch API formats (Anthropic's SDK vs OpenRouter's REST API) into a unified state model. `.batch-state` tracks batches from multiple providers simultaneously.
 - **LLM-as-a-judge routing** — Uses a live model call to classify each result (text/question/error/action_needed) and decide the next step without human intervention.
-- **Persistent history & analytics** — Every completed batch is logged to `.batch-data/history/history.jsonl` with latency, token usage, and cost. Per-provider and per-model aggregates are computed automatically.
+- **Persistent history & analytics** — Every completed batch is logged to `.batch-data/history/history.jsonl` with latency, token usage, cost, and agent. Per-provider and per-model aggregates are computed automatically.
 - **Full observability** — Per-provider latency metrics, routing time tracking, and structured audit logs.
 - **Clean CLI + automation** — Bash wrappers, cron/systemd integration, shell prompt status indicators.
 
@@ -113,13 +117,22 @@ export ANTHROPIC_API_KEY="sk-..."
 export OPENROUTER_API_KEY="sk-..."
 export BATCH_PROVIDER=openrouter
 
-# 4. Send work (single or multi-request batch)
+# 4. Send work — single or multi-request batch
 bash batch.sh send "Write a summary of my project"
 
-# 5. Check status
+#    Or send multiple requests in ONE batch (R1):
+bash batch.sh send "Task 1" "Task 2" "Task 3"
+
+# 5. Tag with agent ownership (R3):
+bash batch.sh --agent "my-pi-session" send "Task"
+
+# 6. Preview batch before sending (R4):
+bash batch.sh --dry-run send "Task 1" "Task 2"
+
+# 7. Check status
 bash batch.sh status
 
-# 6. Later: view history and stats
+# 8. Later: view history and stats
 bash batch.sh history
 bash batch.sh stats
 ```
@@ -127,31 +140,43 @@ bash batch.sh stats
 ## Commands
 
 ```bash
-# Submit a batch request (default provider: anthropic)
+# ── Basic submission (single request in a batch) ──
 bash batch.sh send "Your task description"
 
-# Send via OpenRouter with a specific model
+# ── Multi-request batch (R1): all in one API call ──
+bash batch.sh send "Task 1" "Task 2" "Task 3"
+
+# ── Read tasks from stdin (one per line) ──
+cat tasks.txt | python3 batch-submit.py --from-stdin
+
+# ── Agent ownership (R3): tag the batch ──
+bash batch.sh --agent "pi-session-abc" send "Task"
+
+# ── Provider + model ──
 bash batch.sh --provider openrouter --model "deepseek/deepseek-v4.1-flash" send "Analyze this code"
 
-# Check pipeline status (queued, processing, escalations)
+# ── Dry-run (R4): preview without submitting ──
+bash batch.sh --dry-run send "Task 1" "Task 2"
+
+# ── Check pipeline status ──
 bash batch.sh status
 
-# View items needing human decision
+# ── Items needing human decision ──
 bash batch.sh escalations
 
-# View performance metrics (per-provider breakdown)
+# ── Performance metrics (per-provider breakdown) ──
 bash batch.sh metrics
 
-# View recent history (last 10 completed batches)
-bash batch.history
+# ── Recent history (last 10 completions) ──
+bash batch.sh history
 
-# View aggregate stats per provider/model
+# ── Aggregate stats per provider/model ──
 bash batch.sh stats
 
-# View logs
+# ── Logs ──
 bash batch.sh logs
 
-# List available providers
+# ── Available providers ──
 bash batch.sh providers
 ```
 
@@ -248,15 +273,15 @@ If escalation: review and decide
 
 ### Pipeline stages in detail
 
-1. **Submit** — `batch-submit.py` uses the provider abstraction to convert your task into the correct API format (Anthropic's `{custom_id, params}` or OpenRouter's `{custom_id, method, url, body}`), submits it, and writes a tracking file + state entry.
+1. **Submit** — `batch-submit.py` accepts **one or more messages** (R1). Each gets a unique `custom_id` (R2). You can tag the whole batch with an `--agent` identifier (R3). Use `--dry-run` to preview before sending (R4). The provider abstraction converts tasks into the correct API format, submits them all as a single batch, and writes a tracking file + state entry with all custom_ids.
 
-2. **Poll** — `batch-poll.py` reads `.batch-state`, groups batches by provider, and calls each provider's `retrieve_batch()` / `get_results()` when done. Results are normalized into a common format and written to `responses/`. On completion, the batch is automatically logged to history with latency, usage, cost, and provider backend info.
+2. **Poll** — `batch-poll.py` reads `.batch-state`, groups batches by provider, and calls each provider's `retrieve_batch()` / `get_results()` when done. Results are normalized into a common format and written to `responses/`. Each result carries its original `custom_id` (R2). On completion, the batch is automatically logged to history with latency, usage, cost, provider backend, and agent (R3).
 
 3. **Route** — `batch-router.py` sends each completed result to a live LLM for classification: is this output, a question, an error, or action-needed? Based on the answer, it archives the result, escalates for human review, or re-queues for another batch step.
 
-4. **Log** — Every completed batch is recorded in `.batch-data/history/history.jsonl` and aggregates are updated.
+4. **Log** — Every completed batch is recorded in `.batch-data/history/history.jsonl` with all fields including `agent` and `custom_ids`.
 
-5. **Review** — Human checks `bash batch.sh escalations` or `bash batch.sh status` to see what needs attention. `bash batch.sh history` shows recent completions with costs.
+5. **Review** — Human checks `bash batch.sh escalations` or `bash batch.sh status` to see what needs attention. `bash batch.sh history` shows recent completions with costs and agents.
 
 ## File Structure
 
@@ -317,6 +342,8 @@ Every completed batch is automatically logged to a persistent history database i
 | `prompt_tokens` / `completion_tokens` / `total_tokens` | Token usage |
 | `cost` | Dollar cost (from provider when available) |
 | `provider_backend` | Actual inference provider (e.g. "Sail Research" for DeepSeek via OpenRouter) |
+| `agent` | Agent/source that submitted the batch (R3) |
+| `custom_ids` | List of all request IDs in this batch (R2) |
 
 ### Commands
 
@@ -457,14 +484,17 @@ python3 test_batch_pipeline.py --live
 python3 test_batch_pipeline.py
 ```
 
-Current test results: **11/11 passing** (2 live tests skipped without API key). Tests cover:
+Current test results: **21/21 passing** (2 live tests skipped without API key). Tests cover:
 - Provider registry & factory
 - Request/result dataclasses
 - OpenRouter request format & batch model suffix
 - Anthropic request format
 - Config loading
 - Pipeline graceful error handling
-- History module integration
+- History module: schema, round-trip, empty state, aggregates
+- Router: chat completion fallback, JSON parsing
+- TUI: imports, helper functions, formatting
+- `chat_complete`: OpenRouter + Anthropic implementations, base class contract
 
 ## MCP Server (Claude Desktop, Cursor, VS Code, Pi)
 
