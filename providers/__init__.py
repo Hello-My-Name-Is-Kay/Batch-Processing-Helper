@@ -3,24 +3,27 @@
 Supports multiple batch processing backends:
 - Anthropic Batch API
 - OpenRouter Batch API
+- Groq Batch API
 - Extensible to other providers
 """
 
 from .base import BatchProvider, BatchRequest, BatchResult, BatchStatus
 from .anthropic_provider import AnthropicProvider
 from .openrouter_provider import OpenRouterProvider
+from .groq_provider import GroqProvider
 
 # Provider registry
 _PROVIDERS = {
     "anthropic": AnthropicProvider,
     "openrouter": OpenRouterProvider,
+    "groq": GroqProvider,
 }
 
 def get_provider(name: str = None, **kwargs) -> BatchProvider:
     """Get a batch provider by name.
     
     Args:
-        name: Provider name ("anthropic" or "openrouter"). 
+        name: Provider name ("anthropic", "openrouter" or "groq"). 
               Falls back to BATCH_PROVIDER env var, then "anthropic".
         **kwargs: Provider-specific configuration.
     

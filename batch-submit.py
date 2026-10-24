@@ -26,6 +26,9 @@ Usage:
 
     # Specify provider and model
     python3 batch-submit.py --provider openrouter --model deepseek/deepseek-v4.1-flash "Task"
+
+    # Groq: validate the upload JSONL offline, no API call
+    python3 batch-submit.py --provider groq --dry-run --jsonl-out /tmp/groq.jsonl "Task"
 """
 
 import json
@@ -55,7 +58,8 @@ def load_config():
 
 
 def submit_batch(messages, system_message=None, request_id=None,
-                 provider_name=None, model=None, agent=None, dry_run=False):
+                 provider_name=None, model=None, agent=None, dry_run=False,
+                 jsonl_out=None):
     """Submit multiple messages as a single batch.
 
     Args:
@@ -66,6 +70,7 @@ def submit_batch(messages, system_message=None, request_id=None,
         model: model name
         agent: identifier for the submitting agent (R3)
         dry_run: if True, print the batch and exit without sending (R4)
+        jsonl_out: dry-run only; write the exact upload JSONL to this path
 
     Returns:
         (batch_id, request_id, tracking_data)
@@ -79,6 +84,8 @@ def submit_batch(messages, system_message=None, request_id=None,
     # Sensible default if the default Claude model is used with OpenRouter
     if provider_name == 'openrouter' and model == 'claude-haiku-4-5-20251001':
         model = 'deepseek/deepseek-v4.1-flash'
+    if provider_name == 'groq' and model == 'claude-haiku-4-5-20251001':
+        model = os.environ.get('GROQ_BATCH_MODEL', 'llama-3.1-8b-instant')
 
     if not system_message:
         system_message = (
@@ -103,6 +110,14 @@ def submit_batch(messages, system_message=None, request_id=None,
 
     # ── Dry-run: show the batch without sending (R4) ──
     if dry_run:
+        # Providers with file-based batches (Groq) validate the JSONL offline
+        validation = None
+        if hasattr(provider, "validate_requests"):
+            errors = provider.validate_requests(batch_requests)
+            validation = {"valid": not errors, "errors": errors}
+            if jsonl_out:
+                Path(jsonl_out).write_text(provider.build_jsonl(batch_requests),
+                                           encoding='utf-8')
         print(json.dumps({
             "dry_run": True,
             "batch_request_id": batch_request_id,
@@ -116,7 +131,11 @@ def submit_batch(messages, system_message=None, request_id=None,
                            .get("content", "(no content)")[:80]),
             } for r in batch_requests],
             "system_message": system_message[:100],
+            "validation": validation,
+            "jsonl_out": jsonl_out if validation is not None else None,
         }, indent=2))
+        if validation is not None and not validation["valid"]:
+            sys.exit(2)
         return None, batch_request_id, None
 
     # ── Submit the batch ──
@@ -232,6 +251,11 @@ def main():
         help="Preview the batch without submitting (R4)"
     )
     parser.add_argument(
+        "--jsonl-out",
+        default=None,
+        help="With --dry-run on groq: write the exact upload JSONL to this file"
+    )
+    parser.add_argument(
         "--from-stdin",
         action="store_true",
         help="Read tasks from stdin (one per line)"
@@ -264,6 +288,7 @@ def main():
         model=args.model,
         agent=args.agent,
         dry_run=args.dry_run,
+        jsonl_out=args.jsonl_out,
     )
 
     if not args.dry_run:
