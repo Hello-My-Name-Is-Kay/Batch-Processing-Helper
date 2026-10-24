@@ -4,7 +4,7 @@
 
 ## 📋 TL;DR — What Is This???
 
-**An extensible, multi-provider asynchronous batch processing engine for Large Language Models (LLMs).** It submits work to supported Batch APIs (Anthropic, OpenRouter), polls for results in the background, routes results via LLM classification, and logs every run to a persistent **batch history database** for cost and performance analytics — all with full audit logging, per-provider/per-model metrics, and pluggable provider support.
+**An extensible, multi-provider asynchronous batch processing engine for Large Language Models (LLMs).** It submits work to supported Batch APIs (Anthropic, OpenRouter, Groq), polls for results in the background, routes results via LLM classification, and logs every run to a persistent **batch history database** for cost and performance analytics — all with full audit logging, per-provider/per-model metrics, and pluggable provider support.
 
 ### Why it exists
 
@@ -25,7 +25,7 @@ User Task  →  Provider Abstraction Layer  →  Batch API (Anthropic/OpenRouter
 
 ### What it demonstrates
 
-- **Pluggable provider architecture** — Abstract base class (`BatchProvider`) with concrete implementations for Anthropic and OpenRouter. Adding a new provider is one file + one line of registration.
+- **Pluggable provider architecture** — Abstract base class (`BatchProvider`) with concrete implementations for Anthropic, OpenRouter and Groq. Adding a new provider is one file + one line of registration.
 - **Multi-request batches (R1)** — Send any number of tasks in a single API batch. All requests share one batch lifecycle, reducing overhead and cost.
 - **Per-request IDs (R2)** — Each request gets a unique `custom_id` (e.g. `batch-0000`, `batch-0001`). Results carry the same ID back, so you can trace which response matches which request.
 - **Agent ownership (R3)** — Every batch can be tagged with an `--agent` identifier. The agent follows the batch through state, history, and logs — enabling multi-agent workflows where each pi session owns its batches.
@@ -116,6 +116,10 @@ export ANTHROPIC_API_KEY="sk-..."
 # 3b. Or set API key (OpenRouter)
 export OPENROUTER_API_KEY="sk-..."
 export BATCH_PROVIDER=openrouter
+
+# 3c. Or set API key (Groq)
+export GROQ_API_KEY="gsk_..."
+export BATCH_PROVIDER=groq
 
 # 4. Send work — single or multi-request batch
 bash batch.sh send "Write a summary of my project"
@@ -244,6 +248,28 @@ OpenRouter provides access to **200+ models** from all major providers. The `:ba
 
 See all models at [openrouter.ai/models](https://openrouter.ai/models).
 
+### Groq Configuration
+
+```bash
+export GROQ_API_KEY="gsk_..."                            # Required for submit/poll (not for --dry-run)
+export BATCH_PROVIDER=groq                               # Select provider
+export GROQ_BATCH_MODEL="llama-3.1-8b-instant"           # Model (default shown)
+export GROQ_COMPLETION_WINDOW="24h"                      # 24h..7d (default 24h)
+```
+
+Groq batches are file-based (`https://api.groq.com/openai/v1`):
+
+1. Requests are serialized to JSONL and validated locally (unique `custom_id`, `POST`, supported endpoint, `body.model`, non-empty `messages`, no `stream`, ≤50,000 lines, ≤200 MB).
+2. `POST /files` uploads the JSONL with `purpose=batch`.
+3. `POST /batches` creates the batch (`input_file_id`, `endpoint`, `completion_window`).
+4. `batch-poll.py` calls `GET /batches/{id}`; on `completed` it downloads `output_file_id` and `error_file_id` via `GET /files/{id}/content` and merges both into the result file.
+
+Validate the exact upload file offline (no key, no API call; exit code 2 on invalid JSONL):
+
+```bash
+python3 batch-submit.py --provider groq --dry-run --jsonl-out /tmp/groq.jsonl "Task 1" "Task 2"
+```
+
 ## How It Works
 
 ```
@@ -300,14 +326,15 @@ Batch-Processing-Helper/
 ├── batch_tui.py                 # ★ Interactive TUI (Textual-based, mouse+keyboard)
 ├── batch-mcp.py                 # ★ MCP server (Claude Desktop, Cursor, pi)
 ├── poll_and_results.py          # Convenience: poll batch + retrieve results
-├── test_batch_pipeline.py       # ★ 21 unit tests
+├── test_batch_pipeline.py       # ★ unit tests (incl. Groq offline dry-run)
 ├── .agents/                     # ★ Pi skill (auto-discovered)
 │   └── skills/batch-processing/SKILL.md
 ├── providers/                   # ★ Provider abstraction layer
 │   ├── __init__.py              # Provider registry & factory
 │   ├── base.py                  # Abstract base class (BatchProvider)
 │   ├── anthropic_provider.py    # Anthropic Batch API implementation
-│   └── openrouter_provider.py   # OpenRouter Batch API implementation
+│   ├── openrouter_provider.py   # OpenRouter Batch API implementation
+│   └── groq_provider.py         # Groq Batch API (JSONL upload, poll, file download)
 ├── .batch-data/                 # ★ Runtime data (auto-created)
 │   ├── requests/                # Queued requests (UUID.jsonl)
 │   ├── responses/               # Completed results (UUID.result)

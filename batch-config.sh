@@ -62,6 +62,13 @@ case "${BATCH_PROVIDER}" in
             echo "     export OPENROUTER_API_KEY='sk-...'" >&2
         fi
         ;;
+    groq)
+        if [ -z "${GROQ_API_KEY:-}" ]; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=groq but GROQ_API_KEY is not set." >&2
+            echo "   Set it in your shell rc or export it:" >&2
+            echo "     export GROQ_API_KEY='gsk_...'" >&2
+        fi
+        ;;
 esac
 
 # Ensure directories exist

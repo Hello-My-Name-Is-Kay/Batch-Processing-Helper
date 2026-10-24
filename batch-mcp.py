@@ -116,7 +116,7 @@ class BatchMcpServer:
                     "type": "object",
                     "properties": {
                         "task": {"type": "string", "description": "Task description to submit"},
-                        "provider": {"type": "string", "description": "Provider (anthropic/openrouter)", "default": None},
+                        "provider": {"type": "string", "description": "Provider (anthropic/openrouter/groq)", "default": None},
                         "model": {"type": "string", "description": "Model name", "default": None},
                     },
                     "required": ["task"],

@@ -7,6 +7,7 @@ Tests:
   2. BatchRequest/BatchResult dataclasses
   3. OpenRouter provider (build_request, create_batch, retrieve, results)
   4. Anthropic provider (build_request)
+  4b. Groq provider (offline JSONL dry-run validation, mocked HTTP flow)
   5. Pipeline scripts (batch-submit, batch-poll, batch-router) — smoke tests
   6. End-to-end: submit multi-request batch → poll → results
 
@@ -760,6 +761,188 @@ def test_pipeline_local_flow():
                 os.environ[k] = v
         # Cleanup
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ===========================================================================
+# Groq provider tests (offline: no network, no GROQ_API_KEY needed)
+# ===========================================================================
+
+class _NoNetworkSession:
+    """Stand-in for requests.Session that fails on any HTTP call."""
+    headers: dict = {}
+    def __getattr__(self, name):
+        raise AssertionError(f"network call attempted: session.{name}")
+
+
+def _groq_offline():
+    from providers.groq_provider import GroqProvider
+    p = GroqProvider(api_key=None)
+    p.api_key = None
+    p._session = _NoNetworkSession()
+    return p
+
+
+@test("Groq: registered and instantiable without GROQ_API_KEY")
+def test_groq_registered():
+    from providers import list_providers, get_provider
+    from providers.groq_provider import GroqProvider
+    assert "groq" in list_providers()
+    old = os.environ.pop("GROQ_API_KEY", None)
+    try:
+        assert isinstance(get_provider("groq"), GroqProvider)
+    finally:
+        if old is not None:
+            os.environ["GROQ_API_KEY"] = old
+
+
+@test("Groq: network methods require GROQ_API_KEY")
+def test_groq_requires_key():
+    from providers.groq_provider import GroqProvider
+    p = GroqProvider(api_key=None)
+    p.api_key = None
+    try:
+        p.retrieve_batch("batch_x")
+        raise AssertionError("Expected ValueError")
+    except ValueError as e:
+        assert "GROQ_API_KEY" in str(e)
+
+
+@test("Groq dry-run: built request JSONL validates without calling the API")
+def test_groq_dry_run_jsonl_valid():
+    from providers.groq_provider import validate_jsonl
+    p = _groq_offline()
+    reqs = [p.build_request(f"req-{i}", f"task {i}", system_message="Be concise")
+            for i in range(3)]
+    jsonl = p.build_jsonl(reqs)
+    lines = jsonl.splitlines()
+    assert_eq(len(lines), 3)
+    first = json.loads(lines[0])
+    assert_eq(first["method"], "POST")
+    assert_eq(first["url"], "/v1/chat/completions")
+    assert_eq(first["body"]["messages"][0]["role"], "system")
+    assert_eq(first["body"]["messages"][1]["content"], "task 0")
+    assert_eq(validate_jsonl(jsonl), [])
+    assert_eq(p.validate_requests(reqs), [])
+
+
+@test("Groq dry-run: validator rejects malformed JSONL")
+def test_groq_dry_run_jsonl_invalid():
+    from providers.groq_provider import validate_jsonl
+    ok = {"custom_id": "a", "method": "POST", "url": "/v1/chat/completions",
+          "body": {"model": "m", "messages": [{"role": "user", "content": "x"}]}}
+    def errs(*objs):
+        return validate_jsonl("".join(
+            (o if isinstance(o, str) else json.dumps(o)) + "\n" for o in objs))
+
+    assert errs("not json"), "invalid JSON accepted"
+    assert errs(ok, ok), "duplicate custom_id accepted"
+    assert errs({**ok, "method": "GET"}), "GET accepted"
+    assert errs({**ok, "url": "/v1/embeddings"}), "unsupported url accepted"
+    assert errs({k: v for k, v in ok.items() if k != "body"}), "missing body accepted"
+    assert errs({**ok, "body": {"messages": ok["body"]["messages"]}}), "missing model accepted"
+    assert errs({**ok, "body": {"model": "m", "messages": []}}), "empty messages accepted"
+    assert errs({**ok, "body": {**ok["body"], "stream": True}}), "stream accepted"
+    assert errs({**ok, "custom_id": "b", "url": "/v1/audio/translations"}, ok), \
+        "mixed endpoints accepted"
+    assert errs(""), "empty file accepted"
+    assert_eq(errs(ok), [])
+
+
+@test("Groq dry-run: batch-submit.py --dry-run writes valid JSONL, no key, no API")
+def test_groq_submit_dry_run_cli():
+    import subprocess
+    from providers.groq_provider import validate_jsonl
+    tmpdir = tempfile.mkdtemp(prefix="groq-dry-")
+    try:
+        out = Path(tmpdir) / "batch.jsonl"
+        env = {k: v for k, v in os.environ.items() if k != "GROQ_API_KEY"}
+        env["BATCH_DIR"] = tmpdir
+        env.pop("BATCH_MODEL", None)
+        # Unroutable proxy: any accidental HTTP call would fail
+        env["HTTPS_PROXY"] = env["HTTP_PROXY"] = "http://127.0.0.1:9"
+        proc = subprocess.run(
+            [sys.executable, str(HERE / "batch-submit.py"), "--provider", "groq",
+             "--dry-run", "--jsonl-out", str(out), "Task one", "Task two"],
+            capture_output=True, text=True, env=env, timeout=60)
+        assert proc.returncode == 0, proc.stderr
+        report = json.loads(proc.stdout)
+        assert_eq(report["provider"], "groq")
+        assert_eq(report["request_count"], 2)
+        assert_eq(report["validation"]["valid"], True)
+        assert_eq(validate_jsonl(out.read_text()), [])
+        assert not (Path(tmpdir) / ".batch-state").exists(), "dry-run wrote state"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@test("Groq: upload -> create -> poll -> download flow (mocked HTTP)")
+def test_groq_mocked_flow():
+    from providers.groq_provider import GroqProvider
+    from providers.base import BatchStatus
+
+    class Resp:
+        def __init__(self, code, data=None, text=None):
+            self.status_code = code
+            self._data = data
+            self.text = text if text is not None else json.dumps(data)
+        def json(self):
+            return self._data
+
+    out_jsonl = json.dumps({"id": "r1", "custom_id": "a", "error": None, "response": {
+        "status_code": 200, "body": {"choices": [{"message": {"content": "hi"},
+        "finish_reason": "stop"}], "usage": {"total_tokens": 5}}}}) + "\n"
+    err_jsonl = json.dumps({"id": "r2", "custom_id": "b", "response": None,
+        "error": {"code": "invalid_request", "message": "bad"}}) + "\n"
+    calls = []
+
+    class FakeSession:
+        headers: dict = {}
+        def post(self, url, **kw):
+            calls.append(("POST", url, kw))
+            if url.endswith("/files"):
+                assert_eq(kw["data"]["purpose"], "batch")
+                uploaded = kw["files"]["file"][1].decode()
+                assert_eq(len(uploaded.splitlines()), 2)
+                return Resp(200, {"id": "file_in"})
+            if url.endswith("/batches"):
+                assert_eq(kw["json"]["input_file_id"], "file_in")
+                assert_eq(kw["json"]["endpoint"], "/v1/chat/completions")
+                assert_eq(kw["json"]["completion_window"], "24h")
+                return Resp(200, {"id": "batch_1", "status": "validating"})
+            raise AssertionError(url)
+        def get(self, url, **kw):
+            calls.append(("GET", url, kw))
+            if url.endswith("/batches/batch_1"):
+                return Resp(200, {"id": "batch_1", "status": "completed",
+                                  "output_file_id": "file_out", "error_file_id": "file_err",
+                                  "request_counts": {"total": 2, "completed": 1, "failed": 1}})
+            if url.endswith("/files/file_out/content"):
+                return Resp(200, text=out_jsonl)
+            if url.endswith("/files/file_err/content"):
+                return Resp(200, text=err_jsonl)
+            raise AssertionError(url)
+
+    p = GroqProvider(api_key="gsk-test")
+    p._session = FakeSession()
+    reqs = [p.build_request("a", "x"), p.build_request("b", "y")]
+    assert_eq(p.create_batch(reqs), "batch_1")
+    st = p.retrieve_batch("batch_1")
+    assert_eq(st["status"], BatchStatus.COMPLETED)
+    assert_eq(st["error_file_id"], "file_err")
+    res = {r.custom_id: r for r in p.get_results("batch_1")}
+    assert_eq(res["a"].content, "hi")
+    assert_eq(res["a"].status, BatchStatus.COMPLETED)
+    assert_eq(res["b"].status, BatchStatus.FAILED)
+    assert "invalid_request" in res["b"].error
+
+    # Invalid requests are rejected before any upload
+    n = len(calls)
+    try:
+        p.create_batch([reqs[0], reqs[0]])
+        raise AssertionError("Expected ValueError")
+    except ValueError:
+        pass
+    assert_eq(len(calls), n, "upload attempted for invalid JSONL")
 
 
 class SkipTest(Exception):
