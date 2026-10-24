@@ -36,6 +36,7 @@ User Task → Provider Abstraction Layer → Batch API (Anthropic/OpenRouter)
 
 - **Anthropic**: `export ANTHROPIC_API_KEY="sk-..."`
 - **OpenRouter**: `export OPENROUTER_API_KEY="sk-..."` + `export BATCH_PROVIDER=openrouter`
+- **Groq**: `export GROQ_API_KEY="gsk_..."` + `export BATCH_PROVIDER=groq`
 - Model gets `:batch` suffix appended automatically for OpenRouter
 
 ## Project structure key files
@@ -55,7 +56,7 @@ User Task → Provider Abstraction Layer → Batch API (Anthropic/OpenRouter)
 ## Key env vars
 
 ```
-BATCH_PROVIDER     — anthropic (default) or openrouter
+BATCH_PROVIDER     — anthropic (default), openrouter or groq
 BATCH_MODEL        — model name (default: claude-haiku-4-5-20251001)
 OPENROUTER_BATCH_MODEL — model override for OpenRouter
 ```
