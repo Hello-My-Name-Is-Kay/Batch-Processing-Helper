@@ -4,7 +4,32 @@ Async batch-processing pipeline for LLM work. It submits tasks to the Anthropic,
 
 ![The terminal UI (bash batch.sh tui)](docs/tui.gif)
 
-**Contents:** [Why](#why) · [How it works](#how-it-works) · [Features](#features) · [Providers](#supported-providers) · [Quick start](#quick-start) · [Commands](#commands) · [Interfaces](#interfaces) · [Configuration](#configuration) · [Scheduling](#scheduling) · [Results and cost](#results-history-and-cost) · [Limitations](#limitations) · [Development](#development) · [License](#license)
+**Contents:** [TL;DR](#tldr) · [Why](#why) · [How it works](#how-it-works) · [Features](#features) · [Providers](#supported-providers) · [Quick start](#quick-start) · [Commands](#commands) · [Interfaces](#interfaces) · [Configuration](#configuration) · [Scheduling](#scheduling) · [Results and cost](#results-history-and-cost) · [Limitations](#limitations) · [Development](#development) · [License](#license)
+
+## TL;DR [lines 11-22]
+
+**Quick Overview:** Batch Processing Helper is an automation tool that lets you submit AI tasks to multiple providers (Anthropic, OpenRouter, Groq) and get results without waiting around.
+
+**How It Works:** You write one command, send multiple prompts as a batch, and the system automatically:
+- Polls for results every 2 minutes in the background
+- Classifies each result using an AI classifier (archive vs. human review)
+- Tracks costs, latency, and complete history
+- Shows only items needing human attention
+
+**Key Benefits:**
+- **Cost-effective**: Batch APIs are ~50% cheaper than live calls
+- **Time-saving**: Handles all the boring waiting and routing work automatically
+- **Focused review**: You only see results that need human attention
+- **Multi-provider support**: Works with Anthropic, OpenRouter, or Groq
+- **Complete tracking**: Full cost and performance metrics for every batch
+
+**Who It's For:**
+- Running large-scale AI evaluations, labeling, content generation
+- Any work where you don't need immediate answers
+- Teams wanting to save money on AI API calls
+- Developers needing automated AI task processing
+
+**Bottom Line:** Think of it as an AI task processor that handles the operational overhead of batch processing so you can focus on reviewing only the interesting results — saving both money and time while getting complete visibility into your AI operations.
 
 ## Why
 
