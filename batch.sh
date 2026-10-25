@@ -162,6 +162,7 @@ case "$cmd" in
         echo "Available batch providers:"
         echo "  anthropic   - Anthropic Batch API (default)"
         echo "  openrouter  - OpenRouter Batch API"
+        echo "  groq        - Groq Batch API"
         echo ""
         echo "Set provider via: export BATCH_PROVIDER=openrouter"
         echo "Or per-command:  batch --provider openrouter send 'Task'"
