@@ -12,10 +12,11 @@ PROVIDER_FLAG=""
 MODEL_FLAG=""
 AGENT_FLAG=""
 SYSTEM_FLAG=""
+MAX_TOKENS_FLAG=""
 DRY_RUN=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --provider|-p|--model|-m|--agent|-a|--system|-s)
+        --provider|-p|--model|-m|--agent|-a|--system|-s|--max-tokens)
             if [ $# -lt 2 ]; then
                 echo "Missing value for $1" >&2
                 exit 1
@@ -28,6 +29,7 @@ while [ $# -gt 0 ]; do
                 --model|-m) MODEL_FLAG="$2" ;;
                 --agent|-a) AGENT_FLAG="$2" ;;
                 --system|-s) SYSTEM_FLAG="$2" ;;
+                --max-tokens) MAX_TOKENS_FLAG="$2" ;;
             esac
             shift 2
             ;;
@@ -51,6 +53,7 @@ build_submit_args() {
     [ -n "$MODEL_FLAG" ] && SUBMIT_ARGS+=(--model "$MODEL_FLAG")
     [ -n "$AGENT_FLAG" ] && SUBMIT_ARGS+=(--agent "$AGENT_FLAG")
     [ -n "$SYSTEM_FLAG" ] && SUBMIT_ARGS+=(--system "$SYSTEM_FLAG")
+    [ -n "$MAX_TOKENS_FLAG" ] && SUBMIT_ARGS+=(--max-tokens "$MAX_TOKENS_FLAG")
     [ -n "$DRY_RUN" ] && SUBMIT_ARGS+=(--dry-run)
     return 0
 }
@@ -85,7 +88,7 @@ case "$cmd" in
         if [ $# -lt 1 ]; then
             echo "Usage: batch [flags] send '<message>' ['<message>' ...]" >&2
             echo ""
-            echo "Flags: --provider P  --model M  --agent NAME  --system TEXT  --dry-run"
+            echo "Flags: --provider P  --model M  --agent NAME  --system TEXT  --max-tokens N  --dry-run"
             echo ""
             echo "Examples:"
             echo "  batch send 'Write a summary'"
@@ -176,10 +179,11 @@ case "$cmd" in
         echo "Usage: batch [flags] COMMAND [args...]"
         echo ""
         echo "Flags (before the command):"
-        echo "  --provider, -p   Provider: anthropic (default), openrouter"
+        echo "  --provider, -p   Provider: anthropic (default), openrouter, groq"
         echo "  --model, -m      Model name (provider-specific)"
         echo "  --agent, -a      Agent/session that owns the batch"
         echo "  --system, -s     System message for the requests"
+        echo "  --max-tokens N   Cap on each reply's tokens (default 2048)"
         echo "  --dry-run, -n    Preview the batch without submitting it"
         echo ""
         echo "Commands:"

@@ -96,7 +96,8 @@ def read_stdin_prompts(stream=None):
 
 
 def submit_batch(items, system_message=None, request_id=None, provider_name=None,
-                 model=None, source=None, agent=None, dry_run=False):
+                 model=None, source=None, agent=None, dry_run=False,
+                 max_tokens=None):
     """Submit one batch holding one request per item, and track it.
 
     items: list of {"message", "system"?, "id"?} dicts. With a single item the
@@ -104,6 +105,7 @@ def submit_batch(items, system_message=None, request_id=None, provider_name=None
     "<batch id>-0000", "-0001", ... unless the item brings its own id (R2).
     agent: who owns the batch (R3); it is kept in the state file, the tracking
     file and the history.
+    max_tokens: cap on each reply's tokens (None: the provider's default, 2048).
     dry_run: build the requests and return a preview without contacting the
     provider or writing anything (R4).
 
@@ -143,6 +145,7 @@ def submit_batch(items, system_message=None, request_id=None, provider_name=None
             user_message=item["message"],
             system_message=item.get("system") or system_message,
             model=model,
+            **({"max_tokens": max_tokens} if max_tokens else {}),
         )
         for custom_id, item in zip(custom_ids, items)
     ]
@@ -156,6 +159,8 @@ def submit_batch(items, system_message=None, request_id=None, provider_name=None
         "custom_ids": custom_ids,
         "agent": agent,
     }
+    if max_tokens:
+        result["max_tokens"] = max_tokens
 
     if dry_run:
         result["dry_run"] = True
@@ -310,6 +315,13 @@ def main():
         help="Custom batch request ID (auto-generated UUID if not provided)"
     )
     parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Cap on each reply's tokens (default: the provider's, 2048). Reasoning "
+             "models count their thinking against it, so raise it for long answers"
+    )
+    parser.add_argument(
         "--dry-run", "-n",
         action="store_true",
         help="Preview the batch without submitting it"
@@ -336,6 +348,7 @@ def main():
             source=args.file,
             agent=args.agent,
             dry_run=args.dry_run,
+            max_tokens=args.max_tokens,
         )
     except (ValueError, OSError, RuntimeError) as e:
         print(f"Error: {e}", file=sys.stderr)

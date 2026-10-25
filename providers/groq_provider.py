@@ -188,16 +188,20 @@ class GroqProvider(BatchProvider):
         if system_message:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": user_message})
+        body = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        # gpt-oss reasoning counts against max_tokens; keep it short by default
+        if str(model).startswith("openai/gpt-oss"):
+            body["reasoning_effort"] = "low"
         return {
             "custom_id": custom_id,
             "method": "POST",
             "url": "/v1/chat/completions",
-            "body": {
-                "model": model,
-                "messages": messages,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            },
+            "body": body,
         }
 
     def build_jsonl(self, requests_: list[dict]) -> str:

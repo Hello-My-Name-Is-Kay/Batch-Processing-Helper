@@ -2531,6 +2531,36 @@ def test_groq_chat_complete():
         assert "cut off" in str(e)
 
 
+@test("--max-tokens: CLI flag reaches the request; Groq gpt-oss requests ask for low reasoning effort")
+def test_max_tokens_and_groq_request():
+    import subprocess
+    from providers.groq_provider import GroqProvider
+
+    p = GroqProvider(api_key="gsk-test")
+    req = p.build_request("a", "x", max_tokens=6000)
+    assert_eq(req["body"]["max_tokens"], 6000)
+    assert_eq(req["body"]["reasoning_effort"], "low")
+    other = p.build_request("a", "x", model="qwen/qwen3.6-27b")
+    assert "reasoning_effort" not in other["body"]
+
+    tmpdir = tempfile.mkdtemp(prefix="maxtok-")
+    try:
+        env = {k: v for k, v in os.environ.items() if k != "BATCH_MODEL"}
+        env.update({"BATCH_DIR": tmpdir, "GROQ_API_KEY": "gsk-test"})
+        def dry(*extra):
+            proc = subprocess.run(
+                [sys.executable, str(HERE / "batch-submit.py"), "--provider", "groq",
+                 "--dry-run", *extra, "Task"],
+                capture_output=True, text=True, env=env, timeout=60)
+            assert proc.returncode == 0, proc.stderr
+            return json.loads(proc.stdout)
+        assert_eq(dry("--max-tokens", "4096")["max_tokens"], 4096)
+        assert "max_tokens" not in dry()
+        assert not (Path(tmpdir) / ".batch-state").exists(), "dry-run wrote state"
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Batch Pipeline Tests")
