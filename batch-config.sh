@@ -71,6 +71,8 @@ export BATCH_STATE="${BATCH_DIR}/.batch-state"
 export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 # OpenRouter (required if BATCH_PROVIDER=openrouter)
 export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+# Groq (required if BATCH_PROVIDER=groq)
+export GROQ_API_KEY="${GROQ_API_KEY:-}"
 # Optional: identify your app to OpenRouter
 export OPENROUTER_REFERER="${OPENROUTER_REFERER:-}"
 export OPENROUTER_APP_NAME="${OPENROUTER_APP_NAME:-batch-pipeline}"
@@ -108,6 +110,13 @@ case "${BATCH_PROVIDER}" in
             echo "⚠️  WARNING: BATCH_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set." >&2
             echo "   Set it in your shell rc, in .env, or export it:" >&2
             echo "     export ANTHROPIC_API_KEY='sk-...'" >&2
+        fi
+        ;;
+    groq)
+        if [ -z "${GROQ_API_KEY:-}" ]; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=groq but GROQ_API_KEY is not set." >&2
+            echo "   Set it in .env or export it:" >&2
+            echo "     export GROQ_API_KEY='gsk_...'" >&2
         fi
         ;;
     openrouter)

@@ -22,6 +22,7 @@ __all__ = [
 _PROVIDERS = {
     "anthropic": (".anthropic_provider", "AnthropicProvider"),
     "openrouter": (".openrouter_provider", "OpenRouterProvider"),
+    "groq": (".groq_provider", "GroqProvider"),
 }
 
 
