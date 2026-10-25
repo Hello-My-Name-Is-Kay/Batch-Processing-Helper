@@ -316,21 +316,33 @@ class GroqProvider(BatchProvider):
                       model: Optional[str] = None,
                       max_tokens: int = 512,
                       temperature: float = 0.0) -> Optional[str]:
-        """Live (non-batch) chat completion, used by the router."""
-        if not self.api_key:
-            return None
+        """Live (non-batch) chat completion, used by the router.
+
+        Raises on API errors (like the other providers) so the router can
+        escalate with the real reason instead of "empty response".
+        """
         payload = {
             "model": model or self.default_model(),
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        # gpt-oss models reason before answering; at the router's small token
+        # budget that can use up every token and leave an empty reply.
+        if str(payload["model"]).startswith("openai/gpt-oss"):
+            payload["reasoning_effort"] = "low"
         resp = self.session.post(f"{self.base_url}/chat/completions", json=payload,
                                  timeout=DEFAULT_TIMEOUT)
-        if resp.status_code != 200:
+        data = self._check(resp, "chat completion")
+        choices = data.get("choices", [])
+        if not choices:
             return None
-        choices = resp.json().get("choices", [])
-        return choices[0].get("message", {}).get("content") if choices else None
+        content = choices[0].get("message", {}).get("content")
+        if not content and choices[0].get("finish_reason") == "length":
+            raise RuntimeError(
+                f"Groq reply was cut off at max_tokens={max_tokens} before any answer "
+                f"(model {payload['model']} spent them on reasoning)")
+        return content
 
 
 def parse_result_jsonl(text: str) -> list[BatchResult]:

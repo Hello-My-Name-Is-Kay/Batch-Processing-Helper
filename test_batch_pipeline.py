@@ -2482,6 +2482,55 @@ def test_groq_mocked_flow():
     assert_eq(len(calls), n, "upload attempted for invalid JSONL")
 
 
+@test("Groq: chat_complete raises API errors, limits gpt-oss reasoning, flags truncated replies")
+def test_groq_chat_complete():
+    from providers.groq_provider import GroqProvider
+
+    class Resp:
+        def __init__(self, code, data):
+            self.status_code, self._d, self.text = code, data, json.dumps(data)
+        def json(self):
+            return self._d
+
+    sent = []
+
+    class FakeSession:
+        headers: dict = {}
+        def __init__(self, resp):
+            self.resp = resp
+        def post(self, url, **kw):
+            sent.append(kw["json"])
+            return self.resp
+
+    p = GroqProvider(api_key="gsk-test")
+    msgs = [{"role": "user", "content": "x"}]
+
+    # HTTP errors surface with the real reason (not a silent None)
+    p._session = FakeSession(Resp(404, {"error": {"code": "model_not_found"}}))
+    try:
+        p.chat_complete(msgs)
+        raise AssertionError("Expected RuntimeError")
+    except RuntimeError as e:
+        assert "model_not_found" in str(e)
+
+    # gpt-oss gets a low reasoning effort; other models do not
+    ok = Resp(200, {"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]})
+    p._session = FakeSession(ok)
+    assert_eq(p.chat_complete(msgs, model="openai/gpt-oss-20b"), "hi")
+    assert_eq(sent[-1]["reasoning_effort"], "low")
+    p.chat_complete(msgs, model="qwen/qwen3.6-27b")
+    assert "reasoning_effort" not in sent[-1]
+
+    # Empty content because max_tokens ran out is reported, not returned as ""
+    cut = Resp(200, {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]})
+    p._session = FakeSession(cut)
+    try:
+        p.chat_complete(msgs)
+        raise AssertionError("Expected RuntimeError")
+    except RuntimeError as e:
+        assert "cut off" in str(e)
+
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Batch Pipeline Tests")
