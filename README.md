@@ -372,6 +372,10 @@ AUDIT.md                      Audit report and fix log
 - Integration tests for all providers
 - Provider performance comparison dashboard
 
+### THANKS
+None of this would have been possible if it hadn't been for my mother, @Bupnup, Anthropic, Groq and my cats.
+Also, RIP keyboard. You served me well.
+
 ## License
 
 MIT. A `LICENSE` file has not been added to the repository yet.
