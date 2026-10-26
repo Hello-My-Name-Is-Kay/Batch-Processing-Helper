@@ -2,8 +2,6 @@
 
 Async batch-processing pipeline for LLM work. It submits tasks to the Anthropic, OpenRouter or Groq batch APIs, polls for results in the background, classifies each result with an LLM (archive or escalate), and records cost and latency for every batch. It lets you send a batch with a single command and review only the items that need human attention.
 
-![The terminal UI (bash batch.sh tui)](docs/tui.gif)
-
 **Contents:** [TL;DR](#tldr) · [Why](#why) · [How it works](#how-it-works) · [Features](#features) · [Providers](#supported-providers) · [Quick start](#quick-start) · [Commands](#commands) · [Interfaces](#interfaces) · [Configuration](#configuration) · [Scheduling](#scheduling) · [Results and cost](#results-history-and-cost) · [Limitations](#limitations) · [Development](#development) · [License](#license)
 
 ## TL;DR [lines 11-22]
