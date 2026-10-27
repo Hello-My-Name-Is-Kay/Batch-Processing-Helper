@@ -25,6 +25,9 @@ _PROVIDERS = {
     "groq": (".groq_provider", "GroqProvider"),
     "qwen": (".qwen_provider", "QWENProvider"),
     "deepseek": (".deepseek_provider", "DeepSeekProvider"),
+    "claude": (".claude_provider", "ClaudeProvider"),
+    "gemini": (".gemini_provider", "GeminiProvider"),
+    "together": (".together_provider", "TogetherProvider"),
 }
 
 
