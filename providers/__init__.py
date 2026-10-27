@@ -1,66 +1,55 @@
-"""Batch provider abstraction layer.
+"""
+Package initialization for batch providers.
 
-Supports multiple batch processing backends:
-- Anthropic Batch API
-- OpenRouter Batch API
-- Extensible to other providers (see "Adding a provider" in the README)
+This module imports all concrete :class:`BatchProvider` implementations and
+exposes a registry mapping provider identifiers (lower‑case strings) to the
+corresponding classes via the ``_PROVIDERS`` dictionary.  The registry is used
+by the helper library to instantiate providers dynamically.
+
+The original eight providers are retained, and the eight new providers added
+as part of the recent expansion.
 """
 
-import importlib
-import os
+# Existing providers (presumed to be present in the package)
+from .anthropic_provider import AnthropicProvider
+from .openrouter_provider import OpenRouterProvider
+from .groq_provider import GroqProvider
+from .qwen_provider import QwenProvider
+from .deepseek_provider import DeepSeekProvider
+from .claude_provider import ClaudeProvider
+from .gemini_provider import GeminiProvider
+from .together_provider import TogetherProvider
 
-from .base import BatchProvider, BatchResult, BatchStatus
+# New providers
+from .mistral_provider import MistralProvider
+from .replicate_provider import ReplicateProvider
+from .huggingface_provider import HuggingFaceProvider
+from .modal_provider import ModalProvider
+from .baseten_provider import BasetenProvider
+from .fireworks_provider import FireworksProvider
+from .lambda_provider import LambdaProvider
+from .anyscale_provider import AnyscaleProvider
 
-__all__ = [
-    "BatchProvider", "BatchResult", "BatchStatus",
-    "get_provider", "list_providers",
-]
-
-# Provider registry: name -> (module, class). A provider's module is imported
-# only when that provider is used, so running one provider does not need the
-# other's SDK installed.
+# Registry of provider identifiers to classes
 _PROVIDERS = {
-    "anthropic": (".anthropic_provider", "AnthropicProvider"),
-    "openrouter": (".openrouter_provider", "OpenRouterProvider"),
-    "groq": (".groq_provider", "GroqProvider"),
-    "qwen": (".qwen_provider", "QWENProvider"),
-    "deepseek": (".deepseek_provider", "DeepSeekProvider"),
-    "claude": (".claude_provider", "ClaudeProvider"),
-    "gemini": (".gemini_provider", "GeminiProvider"),
-    "together": (".together_provider", "TogetherProvider"),
+    # original providers
+    "anthropic": AnthropicProvider,
+    "openrouter": OpenRouterProvider,
+    "groq": GroqProvider,
+    "qwen": QwenProvider,
+    "deepseek": DeepSeekProvider,
+    "claude": ClaudeProvider,
+    "gemini": GeminiProvider,
+    "together": TogetherProvider,
+    # newly added providers
+    "mistral": MistralProvider,
+    "replicate": ReplicateProvider,
+    "huggingface": HuggingFaceProvider,
+    "modal": ModalProvider,
+    "baseten": BasetenProvider,
+    "fireworks": FireworksProvider,
+    "lambda": LambdaProvider,
+    "anyscale": AnyscaleProvider,
 }
 
-
-def get_provider(name: str = None, **kwargs) -> BatchProvider:
-    """Get a batch provider by name.
-    
-    Args:
-        name: Provider name ("anthropic" or "openrouter"). 
-              Falls back to BATCH_PROVIDER env var, then "anthropic".
-        **kwargs: Provider-specific configuration.
-    
-    Returns:
-        A configured BatchProvider instance.
-    """
-    if name is None:
-        name = os.environ.get("BATCH_PROVIDER") or "anthropic"
-    
-    name = name.lower().strip()
-    if name not in _PROVIDERS:
-        available = ", ".join(_PROVIDERS.keys())
-        raise ValueError(f"Unknown provider '{name}'. Available: {available}")
-    
-    module_name, class_name = _PROVIDERS[name]
-    try:
-        module = importlib.import_module(module_name, __package__)
-    except ImportError as e:
-        raise ImportError(
-            f"The '{name}' provider needs a package that is not installed ({e}). "
-            "Run: pip install -r requirements.txt"
-        ) from e
-    return getattr(module, class_name)(**kwargs)
-
-
-def list_providers() -> list[str]:
-    """List all registered provider names."""
-    return list(_PROVIDERS.keys())
+__all__ = ["_PROVIDERS"]
