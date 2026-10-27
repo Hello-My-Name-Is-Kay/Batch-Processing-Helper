@@ -23,6 +23,8 @@ _PROVIDERS = {
     "anthropic": (".anthropic_provider", "AnthropicProvider"),
     "openrouter": (".openrouter_provider", "OpenRouterProvider"),
     "groq": (".groq_provider", "GroqProvider"),
+    "qwen": (".qwen_provider", "QWENProvider"),
+    "deepseek": (".deepseek_provider", "DeepSeekProvider"),
 }
 
 
