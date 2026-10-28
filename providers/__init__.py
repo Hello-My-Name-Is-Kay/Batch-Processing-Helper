@@ -14,7 +14,7 @@ as part of the recent expansion.
 from .anthropic_provider import AnthropicProvider
 from .openrouter_provider import OpenRouterProvider
 from .groq_provider import GroqProvider
-from .qwen_provider import QwenProvider
+from .qwen_provider import QWENProvider
 from .deepseek_provider import DeepSeekProvider
 from .claude_provider import ClaudeProvider
 from .gemini_provider import GeminiProvider
@@ -36,7 +36,7 @@ _PROVIDERS = {
     "anthropic": AnthropicProvider,
     "openrouter": OpenRouterProvider,
     "groq": GroqProvider,
-    "qwen": QwenProvider,
+    "qwen": QWENProvider,
     "deepseek": DeepSeekProvider,
     "claude": ClaudeProvider,
     "gemini": GeminiProvider,
@@ -52,4 +52,16 @@ _PROVIDERS = {
     "anyscale": AnyscaleProvider,
 }
 
-__all__ = ["_PROVIDERS"]
+from .base import BatchStatus
+
+def get_provider(name: str, **kwargs):
+    """Get a provider instance by name."""
+    if name not in _PROVIDERS:
+        raise ValueError(f"Unknown provider: {name}. Available: {list(_PROVIDERS.keys())}")
+    return _PROVIDERS[name](**kwargs)
+
+def list_providers():
+    """List all available provider names."""
+    return list(_PROVIDERS.keys())
+
+__all__ = ["_PROVIDERS", "get_provider", "list_providers", "BatchStatus"]
