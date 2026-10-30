@@ -104,7 +104,13 @@ fish start-console.fish stop            # stop only the web page
 
 The same actions exist in Bash: `./start-server.sh --console`, `./start-console.sh start|stop|status`.
 
-Open **http://127.0.0.1:8788/**. The page asks for the console token. The login URL with the token is printed when the console starts and written to `~/.local/state/batch-console/console.log` (owner-only). The token itself is stored in `~/.config/batch-processing-helper/console-token`.
+Open **http://127.0.0.1:8788/**. The page asks for the console token. To get the login URL (which includes the token) at any time:
+
+```bash
+venv/bin/python batch_console.py start     # prints the login URL if already running
+```
+
+The URL is also in `~/.local/state/batch-console/console.log` (owner-only). The raw token is in `~/.config/batch-processing-helper/console-token`, readable only by your user; paste it into the page's token box.
 
 To run the page in the foreground instead (Ctrl+C to stop):
 

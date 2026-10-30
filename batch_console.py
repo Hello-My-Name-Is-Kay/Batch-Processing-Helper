@@ -876,7 +876,11 @@ def _logged_url() -> str:
 def cmd_start(args) -> int:
     if _running_pid():
         print(f"Console already running (pid {_running_pid()}) at http://{args.host}:{args.port}/")
-        print(f"Browser login URL is in {_log_file()}; token file: {_console_token_path()}")
+        url = _logged_url()
+        if url:
+            print(f"Login URL (keep private): {url}")
+        else:
+            print(f"No login URL in {_log_file()}; the token is in {_console_token_path()}")
         return 0
     state = _state_dir()
     state.mkdir(parents=True, exist_ok=True, mode=0o700)
