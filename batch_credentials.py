@@ -1,4 +1,4 @@
-"""Private, user-level credential configuration for the MCP server."""
+"""Private credential configuration with system/global environment fallback."""
 from __future__ import annotations
 
 import getpass
@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+
+from batch_environment import load_environment, source_for_key
 
 PROVIDER_KEYS = {
     "anthropic": ("ANTHROPIC_API_KEY",),
@@ -57,12 +59,19 @@ def save_credentials(data: dict) -> None:
 
 
 def load_credentials() -> None:
-    """Explicitly managed keys override inherited/Pi keys; others remain intact."""
+    """Load global/system environment variables, then apply saved overrides.
+
+    Existing process variables win over environment files. Explicitly saved
+    credentials then override both, making the private store the final local
+    override for CLI, MCP, console, and gateway processes.
+    """
+    load_environment()
     os.environ.update(read_credentials())
 
 
 def has_provider_credential(provider: str) -> bool:
     """Return whether a provider has a saved or inherited credential."""
+    load_environment()
     keys = PROVIDER_KEYS.get(provider, ())
     if not keys:
         return False
@@ -82,7 +91,12 @@ def credential_status() -> dict:
                 saved = read_credentials()
             except (ValueError, OSError):
                 saved = {}
-            source = "private credential store" if any(saved.get(key) for key in PROVIDER_KEYS[provider]) else "environment"
+            if any(saved.get(key) for key in PROVIDER_KEYS[provider]):
+                source = "private credential store"
+            else:
+                source = next((source_for_key(key) or "environment"
+                               for key in PROVIDER_KEYS[provider]
+                               if os.environ.get(key)), "not configured")
         else:
             source = "not configured"
         status[provider] = {"configured": source != "not configured", "source": source}
@@ -109,10 +123,18 @@ def setup() -> None:
     print("Saved keys override environment/Pi keys. Removing one restores that fallback.")
     print("Restart/reconnect the MCP or gateway after changes.\n")
     while True:
+        load_environment()
         data = read_credentials()
         for provider, keys in PROVIDER_KEYS.items():
-            states = [f"{key}: " + ("saved" if key in data else
-                      "inherited" if os.environ.get(key) else "not set") for key in keys]
+            states = []
+            for key in keys:
+                if key in data:
+                    state = "saved"
+                elif os.environ.get(key):
+                    state = source_for_key(key) or "inherited"
+                else:
+                    state = "not set"
+                states.append(f"{key}: {state}")
             print(f"  {provider}: {', '.join(states)}")
         action = input("\n[a]dd/change, [r]emove saved key, [q]uit: ").strip().lower()
         if action in ("q", "quit"):

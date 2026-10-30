@@ -299,13 +299,37 @@ Override these locations with `BATCH_GATEWAY_HOME` and `BATCH_GATEWAY_STATE`.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` lines are supported. Credential precedence is:
+Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` files are supported and parsed as data, never executed. Credential precedence is:
 
 1. Owner-only saved credentials from the console or credential setup
-2. Process environment variables
-3. Project `.env`
+2. Exported process/system environment variables
+3. Files listed in `BATCH_HELPER_ENV_FILES` (first file wins)
+4. The explicit `BATCH_ENV_FILE`
+5. User-global `$XDG_CONFIG_HOME/environment.d/*.conf`
+6. User-global `~/.config/batch-helper/environment`
+7. System-wide `/etc/batch-helper.env`
+8. System-wide `/etc/environment`
+9. Project `.env`
 
-Saved credentials are explicit local configuration and are loaded by the CLI, MCP server, console, and gateway.
+Saved credentials are explicit local configuration and are loaded by the CLI, MCP server, console, and gateway. Existing exported variables are never overwritten by environment files.
+
+Inspect active environment sources without printing values:
+
+```bash
+venv/bin/python batch_environment.py status
+venv/bin/python batch_environment.py files
+```
+
+For a user-global API key, create an owner-only file:
+
+```bash
+mkdir -p ~/.config/batch-helper
+chmod 700 ~/.config/batch-helper
+printf 'GROQ_API_KEY=gsk_...\n' > ~/.config/batch-helper/environment
+chmod 600 ~/.config/batch-helper/environment
+```
+
+A system-wide equivalent can be installed as `/etc/batch-helper.env` with mode `0600` by an administrator.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -319,6 +343,8 @@ Saved credentials are explicit local configuration and are loaded by the CLI, MC
 | `ROUTER_MODEL` | Provider-specific | Model used for live classification |
 | `BATCH_POLL_INTERVAL` | `120` | Seconds between cron polls |
 | `BATCH_DIR` | `.batch-data/` | Runtime data directory |
+| `BATCH_ENV_FILE` | project `.env` | Explicit environment file path |
+| `BATCH_HELPER_ENV_FILES` | unset | Extra environment files separated by `:` |
 | `PROJECT_DIR` | unset | Project context directory used by the router |
 | `PROJECT_CONTEXT_FILE` | unset | Explicit routing-context file |
 
@@ -348,7 +374,7 @@ bash batch.sh metrics
 
 ```bash
 python3 test_batch_pipeline.py --unit
-python3 -m unittest test_batch_console test_batch_management test_batch_credentials test_mcp_regressions test_batch_gateway
+python3 -m unittest test_batch_environment test_batch_console test_batch_management test_batch_credentials test_mcp_regressions test_batch_gateway
 ruff check .
 ```
 
@@ -391,6 +417,7 @@ batch_tui.py                       Textual terminal UI
 batch-orchestrator.sh              Poll/router job and cron setup
 batch-mcp.py                       Stdio MCP server
 batch_credentials.py               Private credential setup
+batch_environment.py               System/global environment discovery
 batch_gateway.py                   OpenAI-compatible batch gateway
 sync_pi_batch_models.py            Refresh Pi gateway model entries
 providers/                         Anthropic, OpenRouter, and Groq providers

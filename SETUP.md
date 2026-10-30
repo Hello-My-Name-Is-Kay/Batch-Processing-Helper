@@ -25,7 +25,7 @@ The console prints an authenticated localhost URL. Keep that URL private. Provid
 Install the dependencies into the project's virtual environment: `source venv/bin/activate && pip install -r requirements.txt`. `batch.sh` and the cron job use `venv/bin/python3` automatically when `venv/` exists. A provider's package is only needed when you use that provider.
 
 **`ANTHROPIC_API_KEY is required` / `OPENROUTER_API_KEY is required` / `GROQ_API_KEY is required`**
-Set the key for the provider you selected in the owner-only private credential store, an environment variable, or `.env` (see `.env.example`). Cron does not see your shell's exports, but it can use the private store or `.env`.
+Set the key for the provider you selected in the owner-only private credential store, an exported environment variable, a system/global environment file, or `.env` (see `.env.example`). Cron does not see your shell's exports, but it can use the private store and environment files.
 
 **The cron job is installed but nothing happens**
 Read `.batch-data/logs/orchestrator.log`: Python's errors from the poll and router are written there. Then check `crontab -l`, that the private credential store or `.env` holds the key, and that `venv/` exists (or set `BATCH_PYTHON`).
@@ -46,7 +46,7 @@ The state file was not valid JSON, so it was moved aside instead of being overwr
 
 - **Where data lives.** Set `BATCH_DIR` to keep runtime data outside the checkout.
 - **Routing context.** Set `PROJECT_CONTEXT_FILE`, or `PROJECT_DIR` (the router then reads the first of `docs/handoff.md`, `HANDOFF.md`, `README.md`, `CONTEXT.md`). The first 2,000 characters are sent to the classifier's provider with every result, so do not point it at private files.
-- **Keys and overrides.** Prefer the owner-only private credential store. Fall back to environment variables or the git-ignored `.env`; saved credentials take precedence over inherited values.
+- **Keys and overrides.** Prefer the owner-only private credential store. Fall back to exported variables, system/global environment files, or the git-ignored `.env`; saved credentials take precedence over inherited values.
 
 ## macOS
 

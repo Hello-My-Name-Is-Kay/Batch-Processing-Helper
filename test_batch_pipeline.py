@@ -646,6 +646,7 @@ def isolated_env(**extra):
         if key.startswith("BATCH_") or key in _MODEL_VARS:
             del os.environ[key]
     os.environ["BATCH_DIR"] = str(tmp)
+    os.environ["BATCH_ENV_FILE"] = str(tmp / "no-such.env")
     os.environ.update(extra)
     try:
         yield tmp
@@ -1250,6 +1251,7 @@ def test_p0_7_unusable_folder():
 def test_p0_7_missing_key():
     with isolated_env() as tmp:
         os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["BATCH_ENV_FILE"] = str(tmp / "no-such.env")
         submit = load_script("batch-submit.py")
         try:
             quietly(submit.submit_request, "hello")

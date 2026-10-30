@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from batch_common import pipeline_counts, read_escalations, resolve_paths
+from batch_environment import display_path, environment_files, load_environment, source_for_key
 from batch_credentials import PROVIDER_KEYS, credential_path, read_credentials, save_credentials
 import batch_management as management
 from providers import list_providers
@@ -134,6 +135,7 @@ class ConsoleApp:
         self.gateway_port = gateway_port
         self.config_dir = Path(os.environ.get("BATCH_CONSOLE_HOME") or console_config_dir())
         self.settings_path = self.config_dir / "console-settings.json"
+        load_environment()
         os.environ["BATCH_PROVIDER"] = self.selected_provider()
 
     # -- settings and credentials ------------------------------------------
@@ -160,13 +162,11 @@ class ConsoleApp:
     def credential_source(self, provider: str) -> str:
         keys = PROVIDER_KEYS.get(provider, ())
         saved = self.saved_credentials()
-        env_file = _project_env_values()
         if any(key in saved for key in keys):
             return "private credential store"
-        if any(os.environ.get(key) for key in keys):
-            return "environment"
-        if any(env_file.get(key) for key in keys):
-            return ".env"
+        for key in keys:
+            if os.environ.get(key):
+                return source_for_key(key) or "process environment"
         return "not configured"
 
     def effective_key(self, provider: str) -> str:
@@ -211,6 +211,10 @@ class ConsoleApp:
             "selected_provider": self.selected_provider(),
             "credential_file": str(credential_path()),
             "runtime_directory": str(resolve_paths()["state_file"]).rsplit("/", 1)[0],
+            "environment_files": [
+                {"path": display_path(path), "exists": path.is_file()}
+                for path in environment_files()
+            ],
         }
 
     # -- monitoring ---------------------------------------------------------

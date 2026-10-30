@@ -210,6 +210,8 @@ async function refreshSetup() {
   state.selectedProvider = data.selected_provider || state.selectedProvider;
   renderProviders();
   populateProviderSelects();
+  const envFiles = (data.environment_files || []).filter(file => file.exists);
+  $("#environment-files").innerHTML = `<strong>Environment sources</strong>${envFiles.length ? `<div class="environment-file-list">${envFiles.map(file => `<code>${escapeHtml(file.path)}</code>`).join("")}</div>` : "<p>No environment files are currently present. Process variables are still supported.</p>"}<p>Files are read safely as KEY=VALUE data; they are never executed.</p>`;
 }
 
 function providerIcon(provider) {

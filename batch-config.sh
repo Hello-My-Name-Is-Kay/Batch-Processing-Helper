@@ -4,46 +4,6 @@
 
 SCRIPT_DIR_BATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo "${BATCH_SCRIPT_DIR:-.}")"
 
-# --- Optional .env file ---
-# cron and other non-interactive callers do not inherit the exports from your
-# shell, so API keys and overrides can live in a KEY=VALUE file instead.
-# Default: .env next to this script (git-ignored); override with BATCH_ENV_FILE.
-# Plain KEY=VALUE lines only (optional quotes, no expansion, no inline
-# comments). The file is parsed, never executed, and variables that are
-# already set in the environment win over it.
-_batch_load_env_file() {
-    local file="$1" line key val
-    [ -f "$file" ] || return 0
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        line="${line#"${line%%[![:space:]]*}"}"
-        line="${line#export }"
-        case "$line" in
-            ''|'#'*) continue ;;
-            *=*) ;;
-            *) continue ;;
-        esac
-        key="${line%%=*}"
-        val="${line#*=}"
-        case "$key" in
-            ''|[0-9]*|*[!A-Za-z0-9_]*) continue ;;
-        esac
-        case "$val" in
-            \"*\") val="${val#\"}"; val="${val%\"}" ;;
-            \'*\') val="${val#\'}"; val="${val%\'}" ;;
-        esac
-        if [ -z "${!key+x}" ]; then
-            export "$key=$val"
-        fi
-    done < "$file"
-}
-_batch_load_env_file "${BATCH_ENV_FILE:-${SCRIPT_DIR_BATCH}/.env}"
-unset -f _batch_load_env_file
-
-# --- Provider Selection ---
-# Set to "anthropic", "openrouter", or "groq"
-export BATCH_PROVIDER="${BATCH_PROVIDER:-anthropic}"
-
 # --- Python interpreter ---
 # Used by batch.sh and the cron job: BATCH_PYTHON if set, else the project's
 # venv, else python3 from PATH.
@@ -56,7 +16,19 @@ if [ -z "${BATCH_PYTHON:-}" ]; then
 fi
 export BATCH_PYTHON
 
-# Check both inherited/.env values and the owner-only private credential store.
+# --- System, user-global, explicit, and project environment files ---
+# batch_environment.py parses KEY=VALUE files without executing them. Existing
+# process variables win over files; explicit files win over user/system files.
+while IFS= read -r _batch_assignment; do
+    [ -n "$_batch_assignment" ] && eval "$_batch_assignment"
+done < <("$BATCH_PYTHON" "${SCRIPT_DIR_BATCH}/batch_environment.py" export 2>/dev/null || true)
+unset _batch_assignment
+
+# --- Provider Selection ---
+# Set to "anthropic", "openrouter", or "groq"
+export BATCH_PROVIDER="${BATCH_PROVIDER:-anthropic}"
+
+# Check inherited, system/global, project, and owner-only private credentials.
 credential_available() {
     "$BATCH_PYTHON" "${SCRIPT_DIR_BATCH}/batch_credentials.py" has "$1" >/dev/null 2>&1
 }
