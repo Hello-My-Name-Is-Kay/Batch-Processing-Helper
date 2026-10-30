@@ -43,7 +43,6 @@ Add to `claude_desktop_config.json` (Settings → Developer → Edit Config):
   `OPENROUTER_API_KEY` or `GROQ_API_KEY`. The MCP server does **not** read `.env`
   (only the shell wrappers do), so keys must be in this block.
 - Never paste a key into the chat. If the user does, tell them to rotate it.
-- Groq needs the `groq-test` branch of the repo (provider not yet on `main`).
 
 ## Workflow
 

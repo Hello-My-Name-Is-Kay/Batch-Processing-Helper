@@ -98,7 +98,7 @@ Every line carries the provider:
 
 ```bash
 tail -f .batch-data/logs/orchestrator.log   # cron runs and Python errors
-tail -f .batch-data/logs/poll.log           # [anthropic] / [openrouter] batch events
+tail -f .batch-data/logs/poll.log           # [anthropic] / [openrouter] / [groq] batch events
 tail -f .batch-data/logs/router.log         # one line per routed result
 ```
 

@@ -9,7 +9,7 @@ Tests:
   4. Anthropic provider (build_request)
   5. Pipeline scripts (batch-submit, batch-poll, batch-router) — smoke tests
   6. End-to-end: submit multi-request batch → poll → results
-  7. Regression tests for the P0 blockers listed in AUDIT.md (fake providers, no network)
+  7. Regression tests for previously fixed pipeline blockers (fake providers, no network)
 
 Usage:
   # Run all tests (skip live API calls unless OPENROUTER_API_KEY is set)
@@ -126,6 +126,8 @@ def test_list_providers():
     provs = list_providers()
     assert "anthropic" in provs, f"Expected 'anthropic' in {provs}"
     assert "openrouter" in provs, f"Expected 'openrouter' in {provs}"
+    assert "groq" in provs, f"Expected 'groq' in {provs}"
+    assert set(provs) == {"anthropic", "openrouter", "groq"}, f"Unexpected providers: {provs}"
 
 
 @test("providers.get_provider returns correct type")
@@ -625,7 +627,7 @@ def test_pipeline_end_to_end():
 
 
 # ===========================================================================
-# Regression tests for the P0 blockers in AUDIT.md
+# Regression tests for previously fixed P0 pipeline blockers
 #
 # Each test fails on the code as audited and passes now. No network: providers
 # are replaced by fakes, and every test works in its own temporary BATCH_DIR.
@@ -1305,7 +1307,7 @@ def test_p0_7_script_defaults():
 
 
 # ===========================================================================
-# Regression tests for the P1 bugs in AUDIT.md
+# Regression tests for previously fixed P1 pipeline bugs
 # ===========================================================================
 
 class FakePollProvider:
@@ -2255,6 +2257,14 @@ def test_cleanup_no_duplicate_helpers():
         assert_eq(files, ["batch_common.py"], f"{name} must only be defined in batch_common.py")
 
 
+@test("One-message chat: --help exits without submitting")
+def test_chat_batch_help_is_side_effect_free():
+    result = run_cmd([sys.executable, str(HERE / "chat_batch.py"), "--help"],
+                     clean_env(HERE), cwd=HERE)
+    assert_eq(result.returncode, 0, result.stderr[-300:])
+    assert "Submit one message" in result.stdout
+
+
 @test("Cleanup: dead files and legacy runtime folders are gone")
 def test_cleanup_repo_layout():
     for name in ("poll_and_results.py", ".github-ready", "requests", "responses", "completed",
@@ -2264,10 +2274,13 @@ def test_cleanup_repo_layout():
     assert ".batch-data/" in ignored
     assert not any(line.startswith(("/requests", "/responses", "/completed", "/escalations", "/logs"))
                    for line in ignored), "rules for the removed legacy folders are still in .gitignore"
-    for doc in ("README.md", "SETUP.md", "PIPELINE.md", "METRICS.md", "ISSUES.md"):
+    for doc in ("README.md", "SETUP.md", "PIPELINE.md", "METRICS.md"):
         text = (HERE / doc).read_text()
         for stale in ("poll_and_results", "history.db.json", "freedom-batch-poll", "Claude-Batching"):
             assert stale not in text, f"{doc} still mentions {stale}"
+    for obsolete in ("AUDIT.md", "ISSUES.md", "CLAUDE.md", "batch_retry.py",
+                     "batch_task.py", "batchat.py", "chat_loop.py"):
+        assert not (HERE / obsolete).exists(), f"obsolete item still exists: {obsolete}"
 
 
 @test("Cleanup: ruff finds nothing (skipped when ruff is not installed)")

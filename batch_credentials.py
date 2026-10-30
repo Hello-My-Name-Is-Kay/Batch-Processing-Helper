@@ -9,21 +9,8 @@ import tempfile
 
 PROVIDER_KEYS = {
     "anthropic": ("ANTHROPIC_API_KEY",),
-    "claude": ("ANTHROPIC_API_KEY",),
     "openrouter": ("OPENROUTER_API_KEY",),
     "groq": ("GROQ_API_KEY",),
-    "qwen": ("QWEN_API_KEY",),
-    "deepseek": ("DEEPSEEK_API_KEY",),
-    "gemini": ("GOOGLE_API_KEY",),
-    "together": ("TOGETHER_API_KEY",),
-    "mistral": ("MISTRAL_API_KEY",),
-    "replicate": ("REPLICATE_API_KEY",),
-    "huggingface": ("HF_API_KEY",),
-    "modal": ("MODAL_TOKEN_ID", "MODAL_TOKEN_SECRET"),
-    "baseten": ("BASETEN_API_KEY",),
-    "fireworks": ("FIREWORKS_API_KEY",),
-    "lambda": ("LAMBDA_API_KEY",),
-    "anyscale": ("ANYSCALE_API_KEY",),
 }
 ALLOWED_KEYS = {key for keys in PROVIDER_KEYS.values() for key in keys}
 

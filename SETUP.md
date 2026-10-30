@@ -21,7 +21,7 @@ To see whether a key is set without printing it:
 **`ModuleNotFoundError: No module named 'anthropic'` (or `requests`, `textual`)**
 Install the dependencies into the project's virtual environment: `source venv/bin/activate && pip install -r requirements.txt`. `batch.sh` and the cron job use `venv/bin/python3` automatically when `venv/` exists. A provider's package is only needed when you use that provider.
 
-**`ANTHROPIC_API_KEY is required` / `OPENROUTER_API_KEY is required`**
+**`ANTHROPIC_API_KEY is required` / `OPENROUTER_API_KEY is required` / `GROQ_API_KEY is required`**
 Set the key for the provider you selected, either as an environment variable or in `.env` (see `.env.example`). Cron does not see your shell's exports, so a scheduled job needs the key in `.env`.
 
 **The cron job is installed but nothing happens**

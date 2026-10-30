@@ -1,6 +1,6 @@
 #!/bin/bash
 # Batch pipeline configuration
-# Supports multiple providers: anthropic (default), openrouter
+# Supports three providers: anthropic (default), openrouter, groq
 
 SCRIPT_DIR_BATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo "${BATCH_SCRIPT_DIR:-.}")"
 
@@ -41,7 +41,7 @@ _batch_load_env_file "${BATCH_ENV_FILE:-${SCRIPT_DIR_BATCH}/.env}"
 unset -f _batch_load_env_file
 
 # --- Provider Selection ---
-# Set to "anthropic" or "openrouter"
+# Set to "anthropic", "openrouter", or "groq"
 export BATCH_PROVIDER="${BATCH_PROVIDER:-anthropic}"
 
 # --- Python interpreter ---

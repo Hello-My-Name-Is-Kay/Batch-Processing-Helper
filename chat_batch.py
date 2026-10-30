@@ -4,21 +4,16 @@
 Submit ONE request as a batch, poll until completed, then show the response.
 """
 
+import argparse
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
-from batch_common import (
-    resolve_paths,
-    load_state,            # FIX: was missing → NameError
-    )
+from batch_common import resolve_paths, load_state
 from providers import get_provider
 from batch_submit import submit_batch
-
-
-DEFAULT_SYSTEM_MESSAGE = "You are an AI assistant. Be helpful and concise."
 
 
 def chat_batch_interactive(items, system_message=None, agent=None,
@@ -129,50 +124,30 @@ def chat_batch_interactive(items, system_message=None, agent=None,
     return None
 
 
-def _parse_int(name, value):
-    try:
-        return int(value)
-    except ValueError:
-        print(f"❌ Invalid {name} value: {value}", file=sys.stderr)
-        sys.exit(1)
+def _positive_int(value):
+    number = int(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than zero")
+    return number
 
 
 def main():
-    args = sys.argv[1:]
-    system_message = None
-    agent = None
-    max_tokens = None
-    polling_interval = 30
-    max_wait = 120
+    parser = argparse.ArgumentParser(
+        description="Submit one message as a provider batch and wait for its reply."
+    )
+    parser.add_argument("--system", help="system message")
+    parser.add_argument("--agent", help="owner/session name")
+    parser.add_argument("--max-tokens", type=_positive_int, help="response token limit")
+    parser.add_argument("--poll-interval", type=_positive_int, default=30,
+                        help="seconds between status checks")
+    parser.add_argument("--max-wait", type=_positive_int, default=120,
+                        help="maximum minutes to wait")
+    parser.add_argument("message", nargs="?", help="message to send")
+    args = parser.parse_args()
 
-    i = 0
-    while i < len(args):
-        a = args[i]
-        if a == '--system' and i + 1 < len(args):
-            system_message = args[i + 1]; i += 2
-        elif a == '--agent' and i + 1 < len(args):
-            agent = args[i + 1]; i += 2
-        elif a == '--max-tokens' and i + 1 < len(args):
-            max_tokens = _parse_int('--max-tokens', args[i + 1]); i += 2
-        elif a == '--poll-interval' and i + 1 < len(args):
-            polling_interval = _parse_int('--poll-interval', args[i + 1]); i += 2
-        elif a == '--max-wait' and i + 1 < len(args):
-            max_wait = _parse_int('--max-wait', args[i + 1]); i += 2
-        elif a == '--':
-            i += 1
-            break
-        else:
-            break
-
-    if i >= len(args):
-        print(
-            "Usage: python3 chat_batch.py [--system TEXT] [--agent NAME] "
-            "[--max-tokens N] [--poll-interval SEC] [--max-wait MIN] 'MESSAGE'",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    message = args[i]
+    message = args.message
+    if not message:
+        parser.error("a message is required")
 
     if not sys.stdin.isatty():
         try:
@@ -184,11 +159,11 @@ def main():
 
     result = chat_batch_interactive(
         items=[{"message": message}],
-        system_message=system_message,
-        agent=agent,
-        max_tokens=max_tokens,
-        poll_interval=polling_interval,
-        max_wait_minutes=max_wait,
+        system_message=args.system,
+        agent=args.agent,
+        max_tokens=args.max_tokens,
+        poll_interval=args.poll_interval,
+        max_wait_minutes=args.max_wait,
     )
 
     if result is None:

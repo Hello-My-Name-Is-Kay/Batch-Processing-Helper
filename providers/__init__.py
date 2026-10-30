@@ -18,24 +18,9 @@ from .base import BatchStatus
 # Lazy-loaded provider registry: maps provider name -> (module_name, class_name)
 # Providers are only imported when get_provider() is called with that name.
 _PROVIDERS = {
-    # original providers
     "anthropic": (".anthropic_provider", "AnthropicProvider"),
     "openrouter": (".openrouter_provider", "OpenRouterProvider"),
     "groq": (".groq_provider", "GroqProvider"),
-    "qwen": (".qwen_provider", "QWENProvider"),
-    "deepseek": (".deepseek_provider", "DeepSeekProvider"),
-    "claude": (".claude_provider", "ClaudeProvider"),
-    "gemini": (".gemini_provider", "GeminiProvider"),
-    "together": (".together_provider", "TogetherProvider"),
-    # newly added providers
-    "mistral": (".mistral_provider", "MistralProvider"),
-    "replicate": (".replicate_provider", "ReplicateProvider"),
-    "huggingface": (".huggingface_provider", "HuggingFaceProvider"),
-    "modal": (".modal_provider", "ModalProvider"),
-    "baseten": (".baseten_provider", "BasetenProvider"),
-    "fireworks": (".fireworks_provider", "FireworksProvider"),
-    "lambda": (".lambda_provider", "LambdaProvider"),
-    "anyscale": (".anyscale_provider", "AnyscaleProvider"),
 }
 
 def get_provider(name: str | None = None, **kwargs):

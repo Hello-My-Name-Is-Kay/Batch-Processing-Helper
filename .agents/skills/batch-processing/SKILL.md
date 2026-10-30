@@ -1,6 +1,6 @@
 ---
 name: batch-processing
-description: Multi-provider async batch processing for LLMs (Anthropic, OpenRouter). Use when submitting, polling, tracking, or analyzing batch LLM requests and their cost/latency metrics.
+description: Async batch processing for LLMs (Anthropic, OpenRouter, Groq). Use when submitting, polling, tracking, or analyzing batch LLM requests and their cost/latency metrics.
 ---
 
 # Batch Processing Helper
@@ -17,6 +17,7 @@ Project at `{{ cwd | default("Batch-Processing-Helper") }}`. Requires `venv/` an
 | Preview a batch without sending it | `bash batch.sh --dry-run send "Task"` |
 | Record which agent owns the batch | `bash batch.sh --agent "my-session" send "Task"` |
 | Submit via OpenRouter with model | `bash batch.sh --provider openrouter --model "deepseek/deepseek-v4.1-flash" send "Task"` |
+| Submit via Groq | `bash batch.sh --provider groq send "Task"` |
 | Check pipeline status | `bash batch.sh status` |
 | Run one poll + route cycle by hand | `bash batch.sh poll` |
 | View recent completions | `bash batch.sh history` |
@@ -32,6 +33,7 @@ How it works: see `PIPELINE.md`. Metrics vs stats: see `METRICS.md`.
 
 - **Anthropic**: `ANTHROPIC_API_KEY`
 - **OpenRouter**: `OPENROUTER_API_KEY` and `BATCH_PROVIDER=openrouter`; model IDs are sent exactly as written
+- **Groq**: `GROQ_API_KEY` and `BATCH_PROVIDER=groq`
 
 ## Key files
 
@@ -50,7 +52,7 @@ How it works: see `PIPELINE.md`. Metrics vs stats: see `METRICS.md`.
 ## Key env vars
 
 ```
-BATCH_PROVIDER          anthropic (default) or openrouter
+BATCH_PROVIDER          anthropic (default), openrouter, or groq
 BATCH_MODEL             model name; unset = the provider's default
 OPENROUTER_BATCH_MODEL  model override for OpenRouter
 BATCH_DIR               where runtime data lives (default .batch-data/)

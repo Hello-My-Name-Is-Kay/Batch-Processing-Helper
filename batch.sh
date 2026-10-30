@@ -1,6 +1,6 @@
 #!/bin/bash
 # Batch Pipeline wrapper (bash shell)
-# Multi-provider support: anthropic (default), openrouter
+# Supported providers: anthropic (default), openrouter, groq
 # Runs batch commands with the project's Python (see BATCH_PYTHON in batch-config.sh)
 
 set -euo pipefail
