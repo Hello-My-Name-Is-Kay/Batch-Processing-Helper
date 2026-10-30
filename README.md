@@ -9,17 +9,18 @@ The project provides four interfaces over the same provider layer:
 - **MCP server** — expose pipeline operations to Pi, Claude Desktop, and other MCP hosts.
 - **HTTP chat gateway** — turn OpenAI-compatible chat requests into provider batches.
 
-**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Web console](#web-console) · [Commands](#commands) · [How it works](#how-it-works) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations)
+**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Web console](#web-console) · [Commands](#commands) · [How it works](#how-it-works) · [Batch management](#batch-management) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [API key sources](#api-key-sources) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations)
 
 ## Features
 
-- Three verified provider integrations: Anthropic, OpenRouter, and Groq
+- Three supported provider integrations: Anthropic, OpenRouter, and Groq
 - Multi-request batches with one provider request per prompt
 - Background polling through `batch-orchestrator.sh` and cron
 - LLM classification into archived text and human-review escalations
 - Persistent history with provider/model latency, token, and cost metrics
 - Interactive Textual TUI
 - Local authenticated web console for setup, monitoring, submission, and control
+- Provider-aware batch management: filtering, detail inspection, polling, cancellation, dismissal, and JSON export
 - MCP tools for status, submission, polling, history, and escalations
 - OpenAI-compatible HTTP gateway for Groq and OpenRouter
 - Owner-only private credential setup
@@ -28,11 +29,11 @@ The project provides four interfaces over the same provider layer:
 
 ## Supported providers
 
-| Provider | Credential | Default model | Verification |
-|---|---|---|---|
-| **Anthropic** | `ANTHROPIC_API_KEY` | Provider default | Offline integration tests |
-| **OpenRouter** | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4.1-flash` | Smoke-tested and offline-tested |
-| **Groq** | `GROQ_API_KEY` | `openai/gpt-oss-20b` | Live-tested and offline-tested |
+| Provider | Credential | Default model | Batch cancellation | Verification |
+|---|---|---|---|---|
+| **Anthropic** | `ANTHROPIC_API_KEY` | `claude-haiku-4-5-20251001` | Supported | Offline integration tests |
+| **OpenRouter** | `OPENROUTER_API_KEY` | `deepseek/deepseek-v4.1-flash` | Not supported | Smoke-tested and offline-tested |
+| **Groq** | `GROQ_API_KEY` | `openai/gpt-oss-20b` | Supported | Live-tested and offline-tested |
 
 Provider availability and supported batch models can change. Check the provider's current documentation before submitting paid work.
 
@@ -48,7 +49,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Configure a key in the environment or in the git-ignored `.env` file:
+Configure a key in the exported environment, a system/global environment file, the owner-only private credential store, or the git-ignored `.env` file. The quickest local option is:
 
 ```bash
 cp .env.example .env
@@ -59,6 +60,14 @@ chmod 600 .env
 BATCH_PROVIDER=groq
 GROQ_API_KEY=gsk_...
 ```
+
+You can also open the Setup page and save credentials interactively:
+
+```bash
+./start-console.sh
+```
+
+See [API key sources](#api-key-sources) for the complete lookup order and system-wide options.
 
 Submit a batch and inspect its state:
 
@@ -98,6 +107,8 @@ The console includes:
 
 Provider keys entered in the console are written to the owner-only private credential store. They are never returned by an API response or stored in browser local storage. The console is loopback-only and every API request requires the per-user console token.
 
+The Setup page also displays the active source of each provider credential and the available user/system environment files, without displaying any key value.
+
 ## Commands
 
 | Command | Purpose |
@@ -111,6 +122,7 @@ Provider keys entered in the console are written to the owner-only private crede
 | `bash batch.sh --max-tokens N send "task"` | Cap each response |
 | `bash batch.sh --dry-run send "task"` | Validate and preview without sending |
 | `bash batch.sh poll` | Run one poll-and-route cycle |
+| `venv/bin/python batch-poll.py --batch-id ID` | Poll only one provider batch |
 | `bash batch.sh status [--json]` | Show pipeline state |
 | `bash batch.sh escalations` | Show results requiring review |
 | `bash batch.sh history [N]` | Show recent history |
@@ -155,6 +167,44 @@ flowchart LR
 6. Completed batches are appended to the history file with provider/model metrics.
 
 See [PIPELINE.md](PIPELINE.md) for internals and [METRICS.md](METRICS.md) for metric definitions.
+
+## Batch management
+
+Batch management is the lifecycle around the provider batch, not just the initial submission. The console's **Batches** page and `batch_management.py` provide one place to inspect and operate tracked work.
+
+### List and filter
+
+Search by batch ID, request ID, model, provider, status, or owner. Filter by provider and status. Active work is shown before terminal batches.
+
+### Inspect
+
+The batch detail view shows:
+
+- Provider, model, status, age, and submission/completion times
+- Request IDs and request counts
+- Provider and end-to-end latency
+- Token usage and cost when recorded
+- Provider errors
+- Result previews
+- Tracking, raw-result, routed-result, archive, and escalation artifacts
+
+Local artifact paths are displayed relative to the project so the console does not expose the local username.
+
+### Lifecycle actions
+
+| Action | Behavior |
+|---|---|
+| **Poll now** | Polls only the selected provider batch and routes only its result file. Other active batches are untouched. |
+| **Cancel at provider** | Requests provider cancellation when supported, then marks the local state as `cancelling`. Anthropic and Groq support cancellation; OpenRouter does not. |
+| **Dismiss from list** | Removes a terminal batch from the active tracker while preserving results, escalation files, and history. The removed entry is recorded in `history/archived-batches.jsonl`. |
+| **Download JSON** | Downloads the batch detail, artifact paths, capability state, and result previews as JSON. |
+
+Cancellation and dismissal are intentionally different:
+
+- **Cancellation** asks the provider to stop work. It is asynchronous and provider-specific.
+- **Dismissal** is a local organization action. It does not cancel or delete provider work.
+
+Automatic retry is not enabled yet. The tracker does not retain enough original prompt data to reconstruct every request safely; a wrong retry could duplicate paid work or change a multi-request batch.
 
 ## MCP server
 
@@ -299,6 +349,8 @@ Override these locations with `BATCH_GATEWAY_HOME` and `BATCH_GATEWAY_STATE`.
 
 ## Configuration
 
+### API key sources
+
 Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` files are supported and parsed as data, never executed. Credential precedence is:
 
 1. Owner-only saved credentials from the console or credential setup
@@ -312,6 +364,16 @@ Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` files are s
 9. Project `.env`
 
 Saved credentials are explicit local configuration and are loaded by the CLI, MCP server, console, and gateway. Existing exported variables are never overwritten by environment files.
+
+| Source | Typical location | Scope |
+|---|---|---|
+| Private credential store | `~/.config/batch-processing-helper/credentials.json` | Batch Helper, owner-only |
+| Exported environment | `GROQ_API_KEY=...` in the launching shell | Current process and children |
+| Explicit file list | `BATCH_HELPER_ENV_FILES` | Current Batch Helper process |
+| Explicit environment file | `BATCH_ENV_FILE` | Current Batch Helper process |
+| User-global files | `$XDG_CONFIG_HOME/environment.d/*.conf`, `~/.config/batch-helper/environment` | User services and desktop apps |
+| System-wide files | `/etc/batch-helper.env`, `/etc/environment` | System services |
+| Project environment | `.env` | This checkout |
 
 Inspect active environment sources without printing values:
 
@@ -391,9 +453,10 @@ Live tests can incur provider charges.
 1. Implement `BatchProvider` from `providers/base.py` in `providers/<name>_provider.py`.
 2. Implement `get_provider_name`, `build_request`, `create_batch`, `retrieve_batch`, and `get_results`.
 3. Return normalized status, request counts, timestamps, and optional usage/cost from `retrieve_batch`.
-4. Register the provider in `providers/__init__.py`.
-5. Add its credential to `batch-config.sh`, `.env.example`, and `batch_credentials.py`.
-6. Add offline tests before advertising it as supported.
+4. If the provider can cancel batches, implement `cancel_batch`; the console discovers that capability automatically.
+5. Register the provider in `providers/__init__.py`.
+6. Add its credential to `batch-config.sh`, `.env.example`, `batch_credentials.py`, and the relevant environment-source tests.
+7. Add offline provider, management, and console capability tests before advertising it as supported.
 
 `providers/openrouter_provider.py` is the JSON-batch reference. `providers/groq_provider.py` is the file-upload reference.
 
@@ -422,18 +485,27 @@ batch_gateway.py                   OpenAI-compatible batch gateway
 sync_pi_batch_models.py            Refresh Pi gateway model entries
 providers/                         Anthropic, OpenRouter, and Groq providers
 docs/tui.gif                        TUI demonstration
+test_batch_pipeline.py              Core pipeline regression suite
+test_batch_environment.py           Environment-source regression suite
+test_batch_management.py            Batch lifecycle regression suite
+test_batch_console.py               Console API and security regression suite
+test_batch_credentials.py           Credential regression suite
+test_mcp_regressions.py             MCP regression suite
+test_batch_gateway.py               Gateway regression suite
 ```
 
 ## Limitations
 
 - Groq has been exercised against the live API. OpenRouter has been smoke-tested. Anthropic is covered by offline integration tests only.
 - The pipeline does not automatically resubmit failed paid batches. Check the existing batch ID before retrying to avoid duplicate charges. The console does not offer retry until original prompts can be retained and replayed safely.
+- Provider cancellation is asynchronous. Anthropic cancellation is offline-validated but has not been exercised against the live API in this repository; OpenRouter does not expose batch cancellation.
 - Provider batch models and limits change over time.
 - Escalations are files; no notification system is included.
 - Anthropic history may contain tokens without a cost estimate.
 - State locking uses POSIX `flock`; Windows and some network filesystems are unsupported.
 - The gateway binds to localhost by default. Do not expose it publicly without a separate authentication and network-security layer.
 - The web console is intentionally loopback-only and uses a local access token; it is not a multi-user or remote administration panel.
+- Environment files are read as plain `KEY=VALUE` data. Shell execution, command substitution, and variable expansion are intentionally unsupported in credential files.
 
 ## License
 
