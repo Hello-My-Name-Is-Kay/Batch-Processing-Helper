@@ -2,13 +2,14 @@
 
 Async batch processing for LLM work. Submit prompts to **Anthropic, OpenRouter, or Groq**, poll for completion, route results for review, and track latency, tokens, and cost.
 
-The project provides three interfaces over the same provider layer:
+The project provides four interfaces over the same provider layer:
 
 - **CLI** — submit and monitor batches from scripts or a terminal.
+- **Web console** — configure providers and operate the pipeline from a local browser dashboard.
 - **MCP server** — expose pipeline operations to Pi, Claude Desktop, and other MCP hosts.
 - **HTTP chat gateway** — turn OpenAI-compatible chat requests into provider batches.
 
-**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Commands](#commands) · [How it works](#how-it-works) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations)
+**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Web console](#web-console) · [Commands](#commands) · [How it works](#how-it-works) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations)
 
 ## Features
 
@@ -18,6 +19,7 @@ The project provides three interfaces over the same provider layer:
 - LLM classification into archived text and human-review escalations
 - Persistent history with provider/model latency, token, and cost metrics
 - Interactive Textual TUI
+- Local authenticated web console for setup, monitoring, submission, and control
 - MCP tools for status, submission, polling, history, and escalations
 - OpenAI-compatible HTTP gateway for Groq and OpenRouter
 - Owner-only private credential setup
@@ -71,6 +73,29 @@ Use `--dry-run` before the first paid submission:
 ```bash
 bash batch.sh --provider groq --dry-run send "Summarize batch APIs in three bullets"
 ```
+
+## Web console
+
+The local web console provides setup, monitoring, and operational controls in one page. It runs separately from the OpenAI-compatible gateway:
+
+```bash
+./start-console.sh
+# or: venv/bin/python batch_console.py --open
+```
+
+The console binds to `127.0.0.1:8788` by default. Startup prints an authenticated URL containing the console access token in its fragment. Keep that URL private; the fragment is used by the browser as a session token and is never sent in the URL request.
+
+The console includes:
+
+- Provider credential setup for Anthropic, OpenRouter, and Groq
+- Credential connection tests and live model discovery
+- Pipeline overview, active batches, history, metrics, and logs
+- Escalation review and result-file inventory
+- Batch submission with dry-run and explicit paid-operation confirmation
+- One-click poll/router cycles
+- Gateway health, start, stop, and restart controls
+
+Provider keys entered in the console are written to the owner-only private credential store. They are never returned by an API response or stored in browser local storage. The console is loopback-only and every API request requires the per-user console token.
 
 ## Commands
 
@@ -178,7 +203,7 @@ Run `pi mcp list` to verify the connection. Use `/reload` after changing MCP con
 
 ### Private credential setup
 
-The MCP server can store provider keys outside the repository:
+The console, MCP server, CLI, and gateway can use provider keys stored outside the repository:
 
 ```bash
 venv/bin/python batch-mcp.py --setup
@@ -190,7 +215,13 @@ Keys are stored in plaintext with owner-only permissions at:
 ~/.config/batch-processing-helper/credentials.json
 ```
 
-The setup menu accepts Anthropic, OpenRouter, and Groq keys. Saved values override inherited environment values for the MCP process. Never commit or paste key values into chat, logs, or issues.
+The setup menu accepts Anthropic, OpenRouter, and Groq keys. Saved values override inherited environment values for Batch Helper processes. Never commit or paste key values into chat, logs, or issues.
+
+The same private store can be inspected without exposing values:
+
+```bash
+venv/bin/python batch_credentials.py status
+```
 
 ## Chat gateway
 
@@ -267,7 +298,13 @@ Override these locations with `BATCH_GATEWAY_HOME` and `BATCH_GATEWAY_STATE`.
 
 ## Configuration
 
-Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` lines are supported; existing environment variables take precedence.
+Copy `.env.example` to `.env` and keep it private. Plain `KEY=VALUE` lines are supported. Credential precedence is:
+
+1. Owner-only saved credentials from the console or credential setup
+2. Process environment variables
+3. Project `.env`
+
+Saved credentials are explicit local configuration and are loaded by the CLI, MCP server, console, and gateway.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -310,7 +347,7 @@ bash batch.sh metrics
 
 ```bash
 python3 test_batch_pipeline.py --unit
-python3 -m unittest test_batch_credentials test_mcp_regressions test_batch_gateway
+python3 -m unittest test_batch_console test_batch_credentials test_mcp_regressions test_batch_gateway
 ruff check .
 ```
 
@@ -338,6 +375,9 @@ Live tests can incur provider charges.
 ```text
 batch.sh, batch.fish              Main CLI wrappers
 batch-chat.fish                    Fish wrapper for one-message batch chat
+batch_console.py                   Local authenticated web console
+console/                           Console HTML, CSS, and JavaScript
+start-console.sh, start-console.fish  Console launchers
 batch-submit.py                    Legacy alias for batch_submit.py
 batch_submit.py                    Submit requests
 batch-poll.py                      Poll providers and collect results
@@ -364,6 +404,7 @@ docs/tui.gif                        TUI demonstration
 - Anthropic history may contain tokens without a cost estimate.
 - State locking uses POSIX `flock`; Windows and some network filesystems are unsupported.
 - The gateway binds to localhost by default. Do not expose it publicly without a separate authentication and network-security layer.
+- The web console is intentionally loopback-only and uses a local access token; it is not a multi-user or remote administration panel.
 
 ## License
 

@@ -57,6 +57,22 @@ class CredentialTests(unittest.TestCase):
         self.assertNotIn("first-example", str(output.call_args_list))
         self.assertNotIn("second-example", str(output.call_args_list))
 
+    def test_credential_status_never_exposes_values(self):
+        credentials.save_credentials({"GROQ_API_KEY": "saved-secret-value"})
+        status = credentials.credential_status()
+        self.assertTrue(status["groq"]["configured"])
+        self.assertEqual(status["groq"]["source"], "private credential store")
+        self.assertNotIn("saved-secret-value", json.dumps(status))
+        self.assertTrue(credentials.has_provider_credential("groq"))
+        self.assertFalse(credentials.has_provider_credential("anthropic"))
+
+    def test_saved_credentials_load_into_process_environment(self):
+        from batch_common import load_provider_credentials
+        credentials.save_credentials({"OPENROUTER_API_KEY": "saved-secret-value"})
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "inherited-value"}, clear=False):
+            load_provider_credentials()
+            self.assertEqual(os.environ["OPENROUTER_API_KEY"], "saved-secret-value")
+
     def test_setup_entrypoint_and_stdio(self):
         script = Path(__file__).parent / "batch-mcp.py"
         result = subprocess.run([sys.executable, str(script), "--setup"], input="q\n",

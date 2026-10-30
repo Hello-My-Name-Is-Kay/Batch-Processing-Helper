@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 from batch_common import (
-    load_state, resolve_paths, state_lock, update_state, write_json_atomic,
+    load_provider_credentials, load_state, resolve_paths, state_lock, update_state, write_json_atomic,
 )
 from batch_history import log_completion, make_history_entry
 from providers import get_provider, list_providers, BatchStatus
@@ -67,6 +67,7 @@ def poll_batches(only_provider=None):
     talking to the providers is not lost.
     """
 
+    load_provider_credentials()
     config = resolve_paths()
     state_file = Path(config['state_file'])
     responses_dir = Path(config['responses_dir'])

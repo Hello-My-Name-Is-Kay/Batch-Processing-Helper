@@ -56,6 +56,11 @@ if [ -z "${BATCH_PYTHON:-}" ]; then
 fi
 export BATCH_PYTHON
 
+# Check both inherited/.env values and the owner-only private credential store.
+credential_available() {
+    "$BATCH_PYTHON" "${SCRIPT_DIR_BATCH}/batch_credentials.py" has "$1" >/dev/null 2>&1
+}
+
 # --- Base Directory ---
 # Default: inside the project directory (self-contained)
 export BATCH_DIR="${BATCH_DIR:-${SCRIPT_DIR_BATCH}/.batch-data}"
@@ -106,24 +111,21 @@ export PROJECT_CONTEXT_FILE="${PROJECT_CONTEXT_FILE:-}"
 # ── Validate API keys ──
 case "${BATCH_PROVIDER}" in
     anthropic)
-        if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-            echo "⚠️  WARNING: BATCH_PROVIDER=anthropic but ANTHROPIC_API_KEY is not set." >&2
-            echo "   Set it in your shell rc, in .env, or export it:" >&2
-            echo "     export ANTHROPIC_API_KEY='sk-...'" >&2
+        if ! credential_available anthropic; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=anthropic but no Anthropic credential is available." >&2
+            echo "   Set it with batch_credentials.py, in .env, or in the environment." >&2
         fi
         ;;
     groq)
-        if [ -z "${GROQ_API_KEY:-}" ]; then
-            echo "⚠️  WARNING: BATCH_PROVIDER=groq but GROQ_API_KEY is not set." >&2
-            echo "   Set it in .env or export it:" >&2
-            echo "     export GROQ_API_KEY='gsk_...'" >&2
+        if ! credential_available groq; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=groq but no Groq credential is available." >&2
+            echo "   Set it with batch_credentials.py, in .env, or in the environment." >&2
         fi
         ;;
     openrouter)
-        if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-            echo "⚠️  WARNING: BATCH_PROVIDER=openrouter but OPENROUTER_API_KEY is not set." >&2
-            echo "   Set it in your shell rc, in .env, or export it:" >&2
-            echo "     export OPENROUTER_API_KEY='sk-...'" >&2
+        if ! credential_available openrouter; then
+            echo "⚠️  WARNING: BATCH_PROVIDER=openrouter but no OpenRouter credential is available." >&2
+            echo "   Set it with batch_credentials.py, in .env, or in the environment." >&2
         fi
         ;;
 esac

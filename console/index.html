@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Batch Helper Console</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="login" class="login-shell" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand-mark">BH</div>
+      <p class="eyebrow">LOCAL ADMIN CONSOLE</p>
+      <h1>Batch Helper</h1>
+      <p class="muted">Enter the access token printed by <code>batch_console.py</code>.</p>
+      <label for="login-token">Console token</label>
+      <input id="login-token" type="password" autocomplete="off" required>
+      <button class="primary full" type="submit">Open console</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="console" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">BH</div>
+        <div><strong>Batch Helper</strong><span>Console v1.0</span></div>
+      </div>
+      <nav aria-label="Console sections">
+        <button class="nav-item active" data-page="overview"><span>⌂</span> Overview</button>
+        <button class="nav-item" data-page="setup"><span>⚙</span> Setup</button>
+        <button class="nav-item" data-page="batches"><span>▤</span> Batches</button>
+        <button class="nav-item" data-page="results"><span>◇</span> Results</button>
+        <button class="nav-item" data-page="metrics"><span>⌁</span> Metrics</button>
+        <button class="nav-item" data-page="logs"><span>≡</span> Logs</button>
+        <button class="nav-item" data-page="gateway"><span>↔</span> Gateway</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="security-note"><span class="dot secure"></span><div><strong>Localhost only</strong><small>Authenticated local session</small></div></div>
+        <button id="logout" class="ghost small">End session</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow" id="page-eyebrow">OPERATIONS</p>
+          <h1 id="page-title">Overview</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="status-cluster">
+            <span class="status-pill" id="pipeline-status"><i class="dot"></i><span>Loading</span></span>
+            <span class="provider-chip" id="provider-chip">Provider —</span>
+          </div>
+          <button id="run-poll" class="secondary">Run poll</button>
+          <button id="open-submit" class="primary">Submit batch</button>
+        </div>
+      </header>
+
+      <section id="page-overview" class="page active">
+        <div class="metric-grid" id="overview-cards"></div>
+        <div class="content-grid two-one">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">LIVE QUEUE</p><h2>Active batches</h2></div><button class="ghost small" data-page-link="batches">View all</button></div>
+            <div id="active-batches" class="table-wrap"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">NEEDS ATTENTION</p><h2>Escalations</h2></div><button class="ghost small" data-page-link="results">Review</button></div>
+            <div id="overview-escalations" class="stack-list"></div>
+          </article>
+        </div>
+        <div class="content-grid two-one">
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">RECENT ACTIVITY</p><h2>History</h2></div><button class="ghost small" data-page-link="metrics">Metrics</button></div>
+            <div id="overview-history" class="table-wrap"></div>
+          </article>
+          <article class="panel">
+            <div class="panel-head"><div><p class="eyebrow">SERVICES</p><h2>Gateway</h2></div><button class="ghost small" data-page-link="gateway">Control</button></div>
+            <div id="overview-gateway" class="service-state"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-setup" class="page">
+        <div class="section-intro"><div><p class="eyebrow">CONFIGURATION</p><h2>Provider setup</h2><p class="muted">Credentials are written to an owner-only private store. They are never returned to this browser.</p></div></div>
+        <div id="provider-cards" class="provider-grid"></div>
+        <div class="content-grid two-one">
+          <article class="panel form-panel">
+            <div class="panel-head"><div><p class="eyebrow">CREDENTIAL</p><h2>Save API key</h2></div></div>
+            <form id="credential-form">
+              <label for="credential-provider">Provider</label>
+              <select id="credential-provider"></select>
+              <label for="credential-key">API key</label>
+              <div class="secret-input"><input id="credential-key" type="password" autocomplete="new-password" required><button type="button" id="toggle-secret">Show</button></div>
+              <p class="field-help">The key is sent once over your localhost connection and is never stored in browser storage.</p>
+              <div class="button-row"><button class="primary" type="submit">Save credential</button><button class="secondary" type="button" id="test-credential">Test connection</button></div>
+              <p id="credential-message" class="form-message" role="status"></p>
+            </form>
+          </article>
+          <article class="panel form-panel">
+            <div class="panel-head"><div><p class="eyebrow">RUNTIME</p><h2>Model selection</h2></div></div>
+            <form id="model-form">
+              <label for="model-provider">Provider</label>
+              <select id="model-provider"></select>
+              <label for="model-name">Batch model</label>
+              <input id="model-name" list="model-options" placeholder="Provider default">
+              <datalist id="model-options"></datalist>
+              <div class="button-row"><button class="primary" type="submit">Save model</button><button class="secondary" type="button" id="discover-models">Discover models</button></div>
+              <p id="model-message" class="form-message" role="status"></p>
+            </form>
+          </article>
+        </div>
+      </section>
+
+      <section id="page-batches" class="page">
+        <div class="section-intro"><div><p class="eyebrow">PIPELINE</p><h2>All batches</h2><p class="muted">Tracked provider work, newest first.</p></div><button class="primary" id="open-submit-2">Submit batch</button></div>
+        <article class="panel"><div id="all-batches" class="table-wrap"></div></article>
+      </section>
+
+      <section id="page-results" class="page">
+        <div class="section-intro"><div><p class="eyebrow">REVIEW QUEUE</p><h2>Escalations & results</h2><p class="muted">Model output is untrusted data. Review before acting on it.</p></div></div>
+        <div class="content-grid two-one">
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">INBOX</p><h2>Needs review</h2></div></div><div id="all-escalations" class="stack-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">FILES</p><h2>Result files</h2></div></div><div id="result-files" class="stack-list"></div></article>
+        </div>
+      </section>
+
+      <section id="page-metrics" class="page">
+        <div class="section-intro"><div><p class="eyebrow">PERFORMANCE</p><h2>Metrics</h2><p class="muted">Latency, throughput, tokens, and cost from collected batches.</p></div></div>
+        <div class="metric-grid" id="metric-cards"></div>
+        <div class="content-grid two-one">
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">LATENCY</p><h2>Provider summary</h2></div></div><div id="metric-providers" class="stack-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">THROUGHPUT</p><h2>Pipeline window</h2></div></div><div id="metric-throughput" class="service-state"></div></article>
+        </div>
+      </section>
+
+      <section id="page-logs" class="page">
+        <div class="section-intro"><div><p class="eyebrow">OBSERVABILITY</p><h2>Logs</h2><p class="muted">Credential-shaped values are redacted before display.</p></div><select id="log-selector"><option value="orchestrator">Orchestrator</option><option value="poll">Poll</option><option value="router">Router</option><option value="gateway">Gateway</option></select></div>
+        <article class="panel log-panel"><div class="panel-head"><div><p class="eyebrow" id="log-path">LIVE LOG</p><h2>Output</h2></div><button class="ghost small" id="refresh-logs">Refresh</button></div><pre id="log-output" class="log-output">No log loaded.</pre></article>
+      </section>
+
+      <section id="page-gateway" class="page">
+        <div class="section-intro"><div><p class="eyebrow">SERVICE CONTROL</p><h2>Batch gateway</h2><p class="muted">The OpenAI-compatible gateway runs separately from this console.</p></div></div>
+        <div class="content-grid two-one">
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">STATUS</p><h2>Gateway health</h2></div></div><div id="gateway-detail" class="service-state"></div></article>
+          <article class="panel form-panel"><div class="panel-head"><div><p class="eyebrow">ACTIONS</p><h2>Process control</h2></div></div><div class="button-row"><button class="secondary" data-gateway="start">Start</button><button class="secondary" data-gateway="restart">Restart</button><button class="danger" data-gateway="stop">Stop</button></div><p id="gateway-message" class="form-message" role="status"></p><div class="info-box"><strong>Endpoint</strong><code>http://127.0.0.1:8787/v1</code><p>Provider keys stay inside the gateway. Pi and other clients authenticate with a gateway key.</p></div></article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="submit-dialog">
+    <form id="submit-form" method="dialog">
+      <div class="dialog-head"><div><p class="eyebrow">PAID OPERATION</p><h2>Submit a batch</h2></div><button class="icon-button" value="cancel" aria-label="Close">×</button></div>
+      <p class="muted">Each line becomes one request in one provider batch. A submitted batch can incur provider charges.</p>
+      <label for="submit-provider">Provider</label>
+      <select id="submit-provider"></select>
+      <label for="submit-model">Model</label>
+      <input id="submit-model" placeholder="Provider default">
+      <label for="submit-prompts">Prompts</label>
+      <textarea id="submit-prompts" rows="7" required placeholder="First prompt&#10;Second prompt"></textarea>
+      <label for="submit-system">System message <span class="optional">optional</span></label>
+      <input id="submit-system" placeholder="Applied to every request">
+      <label for="submit-agent">Owner / agent <span class="optional">optional</span></label>
+      <input id="submit-agent" placeholder="my-session">
+      <label for="submit-max-tokens">Max tokens <span class="optional">optional</span></label>
+      <input id="submit-max-tokens" type="number" min="1" max="100000" placeholder="Provider default">
+      <label class="check-row"><input id="submit-confirm" type="checkbox"><span>I understand this can incur provider charges.</span></label>
+      <div class="dialog-actions"><button class="secondary" id="dry-run" type="button">Dry run</button><button class="primary" id="send-batch" type="submit">Submit batch</button></div>
+      <p id="submit-message" class="form-message" role="status"></p>
+    </form>
+  </dialog>
+
+  <div id="toast-region" class="toast-region" aria-live="polite"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

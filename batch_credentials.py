@@ -61,11 +61,53 @@ def load_credentials() -> None:
     os.environ.update(read_credentials())
 
 
+def has_provider_credential(provider: str) -> bool:
+    """Return whether a provider has a saved or inherited credential."""
+    keys = PROVIDER_KEYS.get(provider, ())
+    if not keys:
+        return False
+    try:
+        saved = read_credentials()
+    except (ValueError, OSError):
+        saved = {}
+    return any(bool(saved.get(key) or os.environ.get(key)) for key in keys)
+
+
+def credential_status() -> dict:
+    """Return credential availability and source without exposing key values."""
+    status = {}
+    for provider in PROVIDER_KEYS:
+        if has_provider_credential(provider):
+            try:
+                saved = read_credentials()
+            except (ValueError, OSError):
+                saved = {}
+            source = "private credential store" if any(saved.get(key) for key in PROVIDER_KEYS[provider]) else "environment"
+        else:
+            source = "not configured"
+        status[provider] = {"configured": source != "not configured", "source": source}
+    return status
+
+
+def _cli() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Inspect or manage Batch Helper credentials")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status", help="show configured providers without exposing values")
+    has = sub.add_parser("has", help="exit successfully when a provider credential is available")
+    has.add_argument("provider", choices=sorted(PROVIDER_KEYS))
+    args = parser.parse_args()
+    if args.command == "status":
+        print(json.dumps(credential_status(), indent=2))
+        return 0
+    return 0 if has_provider_credential(args.provider) else 1
+
+
 def setup() -> None:
-    print("Batch MCP credential setup")
+    print("Batch Helper credential setup")
     print(f"Storage: {credential_path()} (plaintext, owner-only permissions)")
     print("Saved keys override environment/Pi keys. Removing one restores that fallback.")
-    print("Anthropic and Claude share a key. Restart/reconnect MCP after changes.\n")
+    print("Restart/reconnect the MCP or gateway after changes.\n")
     while True:
         data = read_credentials()
         for provider, keys in PROVIDER_KEYS.items():
@@ -98,4 +140,8 @@ def setup() -> None:
                 continue
             data.update(updates)
         save_credentials(data)
-        print("Saved. Reconnect the MCP server to apply changes.\n")
+        print("Saved. Restart or reconnect long-running processes to apply changes.\n")
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli())

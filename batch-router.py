@@ -15,7 +15,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-from batch_common import resolve_paths
+from batch_common import load_provider_credentials, resolve_paths
 from providers import get_provider, list_providers
 
 DEFAULT_ROUTER_MODEL = 'claude-haiku-4-5-20251001'
@@ -140,6 +140,7 @@ def classify_with_live_api(response_text, project_context, config):
     router_provider = config.get('router_provider', 'anthropic')
     router_model = config.get('router_model')
 
+    load_provider_credentials()
     provider = get_provider(router_provider)
 
     response = provider.chat_complete(

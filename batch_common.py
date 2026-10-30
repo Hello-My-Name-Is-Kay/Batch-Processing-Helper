@@ -23,6 +23,23 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.resolve()
 
+
+def load_provider_credentials() -> None:
+    """Load owner-only saved credentials into the process environment.
+
+    Saved credentials are explicit local configuration and take precedence over
+    inherited environment values. Invalid credential files are reported without
+    exposing their contents and do not prevent read-only commands from running.
+    """
+    try:
+        from batch_credentials import load_credentials
+        load_credentials()
+    except ImportError:
+        return
+    except (ValueError, OSError) as exc:
+        print(f"Warning: cannot load saved credentials: {exc}", file=sys.stderr)
+
+
 # What Anthropic accepts for a custom_id; also keeps ids safe to use as file names.
 _CUSTOM_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 

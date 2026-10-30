@@ -36,7 +36,9 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-from batch_common import resolve_paths, update_state, validate_custom_id, write_json_atomic
+from batch_common import (
+    load_provider_credentials, resolve_paths, update_state, validate_custom_id, write_json_atomic,
+)
 from providers import get_provider, list_providers
 
 DEFAULT_SYSTEM_MESSAGE = (
@@ -118,6 +120,7 @@ def submit_batch(items, system_message=None, request_id=None, provider_name=None
     dry_run=True, batch_id=None and a "requests" preview as well).
     """
 
+    load_provider_credentials()
     config = load_config()
     group_id = validate_custom_id(request_id or str(uuid.uuid4()))
     provider_name = provider_name or config['provider']
