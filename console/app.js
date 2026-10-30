@@ -6,6 +6,9 @@ const state = {
   providers: [],
   selectedProvider: "anthropic",
   overview: null,
+  batchRows: [],
+  currentBatchDetail: null,
+  batchSearchTimer: null,
   refreshTimer: null,
 };
 
@@ -158,14 +161,14 @@ function renderOverview(data) {
 
 function batchTable(rows, compact = false) {
   if (!rows.length) return '<div class="empty">No batches to show.</div>';
-  return `<table><thead><tr><th>Batch</th><th>Provider</th><th>Model</th><th>Status</th><th>Age</th>${compact ? "" : "<th>Requests</th>"}</tr></thead><tbody>${
+  return `<table><thead><tr><th>Batch</th><th>Provider</th><th>Model</th><th>Status</th><th>Age</th>${compact ? "" : "<th>Requests</th><th>Actions</th>"}</tr></thead><tbody>${
     rows.map(row => `<tr>
       <td class="mono" title="${escapeHtml(row.batch_id)}">${escapeHtml((row.batch_id || "").slice(0, 13))}…</td>
       <td>${escapeHtml(row.provider || "—")}</td>
       <td title="${escapeHtml(row.model || "")}">${escapeHtml((row.model || "—").slice(0, 28))}</td>
       <td>${statusBadge(row.status)}</td>
       <td>${escapeHtml(row.age || "—")}</td>
-      ${compact ? "" : `<td>${formatNumber(row.request_counts?.total || row.custom_ids?.length || 0)}</td>`}
+      ${compact ? "" : `<td>${formatNumber(row.request_counts?.total || row.custom_ids?.length || 0)}</td><td><button class="secondary small manage-batch" data-batch-id="${escapeHtml(row.batch_id)}">Manage</button></td>`}
     </tr>`).join("")
   }</tbody></table>`;
 }
@@ -258,8 +261,57 @@ function navigate(page) {
 }
 
 async function loadBatches() {
-  const data = await api("/api/batches");
-  $("#all-batches").innerHTML = batchTable(data.batches || []);
+  const params = new URLSearchParams();
+  const provider = $("#batch-provider-filter").value;
+  const status = $("#batch-status-filter").value;
+  const search = $("#batch-search").value.trim();
+  if (provider) params.set("provider", provider);
+  if (status) params.set("status", status);
+  if (search) params.set("search", search);
+  params.set("limit", "1000");
+  const data = await api(`/api/batches?${params}`);
+  state.batchRows = data.batches || [];
+  $("#all-batches").innerHTML = batchTable(state.batchRows);
+}
+
+async function openBatchDetail(batchId) {
+  try {
+    const detail = await api(`/api/batches/detail?batch_id=${encodeURIComponent(batchId)}`);
+    state.currentBatchDetail = detail;
+    renderBatchDetail(detail);
+    setMessage("#batch-message", "");
+    const dialog = $("#batch-dialog");
+    if (!dialog.open && typeof dialog.showModal === "function") dialog.showModal();
+    else if (!dialog.open) dialog.setAttribute("open", "");
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function renderBatchDetail(detail) {
+  const history = detail.history || {};
+  const requests = detail.request_counts || {};
+  const caps = detail.capabilities || {};
+  $("#batch-dialog-title").textContent = detail.batch_id || "Batch details";
+  $("#batch-detail-content").innerHTML = `
+    <div class="detail-grid">
+      <div class="detail-stat"><span>Status</span><strong>${statusBadge(detail.status)}</strong></div>
+      <div class="detail-stat"><span>Provider</span><strong>${escapeHtml(detail.provider || "—")}</strong></div>
+      <div class="detail-stat"><span>Model</span><strong title="${escapeHtml(detail.model || "")}">${escapeHtml(detail.model || "—")}</strong></div>
+      <div class="detail-stat"><span>Age</span><strong>${escapeHtml(detail.age || "—")}</strong></div>
+      <div class="detail-stat"><span>Requests</span><strong>${formatNumber(requests.total || detail.custom_ids?.length || 0)}</strong></div>
+      <div class="detail-stat"><span>Latency</span><strong>${detail.latency_seconds ?? history.latency_seconds ?? "—"}s</strong></div>
+      <div class="detail-stat"><span>Tokens</span><strong>${formatNumber(history.total_tokens)}</strong></div>
+      <div class="detail-stat"><span>Cost</span><strong>${formatCurrency(history.cost)}</strong></div>
+    </div>
+    <div class="detail-section"><h3>Request identifiers</h3><div class="preview">${escapeHtml((detail.custom_ids || []).join("\n") || detail.request_id || "—")}</div></div>
+    ${detail.error ? `<div class="detail-section"><h3>Provider error</h3><div class="preview">${escapeHtml(detail.error)}</div></div>` : ""}
+    ${detail.result_items?.length ? `<div class="detail-section"><h3>Result preview</h3>${detail.result_items.map(item => `<div class="list-item"><div class="list-item-head"><strong>${escapeHtml(item.custom_id)}</strong>${statusBadge(item.status)}</div>${item.error ? `<div class="preview">${escapeHtml(item.error)}</div>` : `<div class="preview">${escapeHtml(item.content_preview || "No text content")}</div>`}</div>`).join("")}</div>` : ""}
+    <div class="detail-section"><h3>Local artifacts</h3><div class="detail-files">${(detail.files || []).map(file => `<div class="detail-file"><span>${escapeHtml(file.kind)}</span><code title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</code></div>`).join("")}</div></div>
+    <div class="detail-section"><h3>Capabilities</h3><div class="provider-state"><i class="dot ${caps.poll || caps.cancel || caps.archive ? "secure" : "warn"}"></i>${caps.poll ? "Can poll now" : "Polling complete"} · ${caps.cancel ? "Provider cancellation available" : "Provider cancellation unavailable"} · ${caps.archive ? "Can dismiss from active list" : "Must finish before dismissal"}</div></div>`;
+  $("#batch-poll-one").disabled = !caps.poll;
+  $("#batch-cancel").disabled = !caps.cancel;
+  $("#batch-archive").disabled = !caps.archive;
 }
 
 async function loadResults() {
@@ -505,6 +557,69 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#log-selector").addEventListener("change", loadLogs);
   $("#refresh-logs").addEventListener("click", loadLogs);
   $$('[data-gateway]').forEach(button => button.addEventListener("click", () => gatewayAction(button.dataset.gateway)));
+
+  $("#refresh-batches").addEventListener("click", loadBatches);
+  $("#batch-provider-filter").addEventListener("change", loadBatches);
+  $("#batch-status-filter").addEventListener("change", loadBatches);
+  $("#batch-search").addEventListener("input", () => {
+    window.clearTimeout(state.batchSearchTimer);
+    state.batchSearchTimer = window.setTimeout(loadBatches, 220);
+  });
+  $("#all-batches").addEventListener("click", event => {
+    const button = event.target.closest(".manage-batch");
+    if (button) openBatchDetail(button.dataset.batchId);
+  });
+  $("#close-batch-dialog").addEventListener("click", () => $("#batch-dialog").close());
+  $("#batch-poll-one").addEventListener("click", async () => {
+    const detail = state.currentBatchDetail;
+    if (!detail) return;
+    setMessage("#batch-message", "Polling this batch…");
+    $("#batch-poll-one").disabled = true;
+    try {
+      const result = await api("/api/batches/poll", { method: "POST", body: JSON.stringify({ batch_id: detail.batch_id }) });
+      state.currentBatchDetail = result.detail;
+      renderBatchDetail(result.detail);
+      setMessage("#batch-message", "Batch poll complete.", "ok");
+      await Promise.all([loadBatches(), refreshOverview()]);
+    } catch (error) {
+      setMessage("#batch-message", error.message, "bad");
+    }
+  });
+  $("#batch-cancel").addEventListener("click", async () => {
+    const detail = state.currentBatchDetail;
+    if (!detail || !window.confirm(`Ask ${detail.provider} to cancel this batch?`)) return;
+    setMessage("#batch-message", "Requesting cancellation…");
+    try {
+      await api("/api/batches/cancel", { method: "POST", body: JSON.stringify({ batch_id: detail.batch_id }) });
+      setMessage("#batch-message", "Cancellation requested. The provider will confirm it asynchronously.", "ok");
+      await Promise.all([loadBatches(), refreshOverview()]);
+      await openBatchDetail(detail.batch_id);
+    } catch (error) {
+      setMessage("#batch-message", error.message, "bad");
+    }
+  });
+  $("#batch-archive").addEventListener("click", async () => {
+    const detail = state.currentBatchDetail;
+    if (!detail || !window.confirm("Dismiss this batch from the active list? Results and history will be preserved.")) return;
+    try {
+      await api("/api/batches/archive", { method: "POST", body: JSON.stringify({ batch_id: detail.batch_id }) });
+      $("#batch-dialog").close();
+      toast("Batch dismissed from the active list", "success");
+      await Promise.all([loadBatches(), refreshOverview()]);
+    } catch (error) {
+      setMessage("#batch-message", error.message, "bad");
+    }
+  });
+  $("#batch-download").addEventListener("click", () => {
+    if (!state.currentBatchDetail) return;
+    const blob = new Blob([JSON.stringify(state.currentBatchDetail, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${state.currentBatchDetail.batch_id || "batch"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  });
 
   boot();
 });

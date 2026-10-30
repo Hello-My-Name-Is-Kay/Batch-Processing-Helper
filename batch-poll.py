@@ -56,7 +56,7 @@ def _log(logs_dir, message):
         f.write(line + "\n")
 
 
-def poll_batches(only_provider=None):
+def poll_batches(only_provider=None, batch_ids=None):
     """Check pending batches for completion.
 
     Looks at every provider's batches, or only `only_provider`'s if given. Batches
@@ -86,8 +86,11 @@ def poll_batches(only_provider=None):
 
     # Group batches by provider for efficient polling
     batches_by_provider = {}
+    selected_ids = set(batch_ids) if batch_ids is not None else None
     for batch_id, batch_info in list(state.items()):
         if batch_info.get('status') in TERMINAL_STATES:
+            continue
+        if selected_ids is not None and batch_id not in selected_ids:
             continue
         provider_name = batch_info.get('provider', 'anthropic')
         if only_provider and provider_name != only_provider:
@@ -226,9 +229,15 @@ def main():
         choices=list_providers(),
         help="Only poll batches from this provider (default: all providers)"
     )
-    
+    parser.add_argument(
+        "--batch-id",
+        default=None,
+        help="Poll only this provider batch ID"
+    )
+
     args = parser.parse_args()
-    count = poll_batches(only_provider=args.provider)
+    selected = [args.batch_id] if args.batch_id else None
+    count = poll_batches(only_provider=args.provider, batch_ids=selected)
     print(json.dumps({"completed": count}))
 
 

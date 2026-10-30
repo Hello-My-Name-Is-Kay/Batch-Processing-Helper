@@ -96,6 +96,10 @@ class BatchProvider(ABC):
         """Model used when the caller does not pick one (None: no default)."""
         return None
 
+    def supports_cancel(self) -> bool:
+        """Whether this provider implements batch cancellation."""
+        return type(self).cancel_batch is not BatchProvider.cancel_batch
+
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a running batch. Optional."""
         raise NotImplementedError(f"{self.get_provider_name()} does not support cancelling batches")

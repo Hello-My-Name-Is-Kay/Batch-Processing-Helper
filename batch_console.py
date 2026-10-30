@@ -33,8 +33,9 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from batch_common import format_age, pipeline_counts, read_escalations, read_state, resolve_paths
+from batch_common import pipeline_counts, read_escalations, resolve_paths
 from batch_credentials import PROVIDER_KEYS, credential_path, read_credentials, save_credentials
+import batch_management as management
 from providers import list_providers
 
 ROOT = Path(__file__).resolve().parent
@@ -214,38 +215,6 @@ class ConsoleApp:
 
     # -- monitoring ---------------------------------------------------------
 
-    @staticmethod
-    def _batch_rows(state: dict) -> list[dict]:
-        status_order = {"running": 0, "submitted": 1, "completed": 2, "failed": 3, "cancelled": 4}
-        rows = []
-        for batch_id, info in state.items():
-            if not isinstance(info, dict):
-                continue
-            rows.append({
-                "batch_id": batch_id,
-                "custom_id": info.get("custom_id", ""),
-                "custom_ids": info.get("custom_ids", []),
-                "provider": info.get("provider", ""),
-                "model": info.get("model", ""),
-                "status": info.get("status", "unknown"),
-                "age": format_age(info.get("submitted_at_unix")),
-                "submitted_at": info.get("submitted_at", ""),
-                "completed_at": info.get("completed_at", ""),
-                "latency_seconds": info.get("latency_seconds"),
-                "request_counts": info.get("request_counts", {}),
-                "agent": info.get("agent", ""),
-                "error": redact(info.get("error", "")),
-            })
-        rows.sort(key=lambda row: (
-            status_order.get(row["status"], 9),
-            row["submitted_at"],
-        ), reverse=False)
-        running = sorted((r for r in rows if r["status"] in ("running", "submitted")),
-                         key=lambda r: r["submitted_at"], reverse=True)
-        finished = sorted((r for r in rows if r["status"] not in ("running", "submitted")),
-                          key=lambda r: r["submitted_at"], reverse=True)
-        return running + finished
-
     def gateway_health(self) -> dict:
         url = f"http://127.0.0.1:{self.gateway_port}/health"
         try:
@@ -257,8 +226,7 @@ class ConsoleApp:
             return {"running": False, "url": url, "error": redact(exc)}
 
     def overview(self) -> dict:
-        state = read_state()
-        rows = self._batch_rows(state)
+        rows = management.list_batches(limit=1000)
         provider_counts = {}
         for row in rows:
             provider_counts[row["provider"]] = provider_counts.get(row["provider"], 0) + 1
@@ -461,6 +429,73 @@ class ConsoleApp:
                 steps.append({"step": script, "returncode": 124, "error": "timed out after 180 seconds"})
         return {"steps": steps, "completed_at": time.time()}
 
+    def batch_detail(self, batch_id: str) -> dict:
+        try:
+            return management.batch_details(batch_id)
+        except KeyError as exc:
+            raise ConsoleError("Batch not found", 404) from exc
+
+    def poll_batch(self, batch_id: str) -> dict:
+        try:
+            detail = self.batch_detail(batch_id)
+        except ConsoleError:
+            raise
+        if not detail["capabilities"]["poll"]:
+            raise ConsoleError("This batch has already finished")
+        env = os.environ.copy()
+        provider = detail["provider"]
+        key = self.effective_key(provider)
+        if key:
+            env[PROVIDER_KEYS[provider][0]] = key
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(ROOT / "batch-poll.py"), "--batch-id", batch_id],
+                cwd=ROOT, env=env, capture_output=True, text=True, timeout=180,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ConsoleError("Batch poll timed out", 504) from exc
+        steps = [{
+            "step": "batch-poll.py",
+            "returncode": completed.returncode,
+            "output": redact(completed.stdout.strip())[-1000:],
+            "error": redact(completed.stderr.strip())[-1000:],
+        }]
+        refreshed = self.batch_detail(batch_id)
+        result_file = Path(resolve_paths()["responses_dir"]) / f"{refreshed['request_id']}.result"
+        if result_file.exists():
+            try:
+                routed = subprocess.run(
+                    [sys.executable, str(ROOT / "batch-router.py"), result_file],
+                    cwd=ROOT, env=env, capture_output=True, text=True, timeout=180,
+                )
+                steps.append({
+                    "step": "batch-router.py",
+                    "returncode": routed.returncode,
+                    "output": redact(routed.stdout.strip())[-1000:],
+                    "error": redact(routed.stderr.strip())[-1000:],
+                })
+            except subprocess.TimeoutExpired:
+                steps.append({"step": "batch-router.py", "returncode": 124, "error": "timed out after 180 seconds"})
+        return {"batch_id": batch_id, "steps": steps, "detail": self.batch_detail(batch_id)}
+
+    def cancel_batch(self, batch_id: str) -> dict:
+        try:
+            return management.cancel_batch(batch_id)
+        except KeyError as exc:
+            raise ConsoleError("Batch not found", 404) from exc
+        except ValueError as exc:
+            raise ConsoleError(str(exc), 400) from exc
+        except Exception as exc:
+            raise ConsoleError(f"Cancellation failed: {redact(exc)}", 502) from exc
+
+    def archive_batch(self, batch_id: str) -> dict:
+        try:
+            return management.archive_batch(batch_id)
+        except KeyError as exc:
+            raise ConsoleError("Batch not found", 404) from exc
+        except ValueError as exc:
+            raise ConsoleError(str(exc), 400) from exc
+
     def review_escalation(self, body: dict) -> dict:
         filename = body.get("file")
         if not isinstance(filename, str) or not filename.endswith(".escalate"):
@@ -610,7 +645,16 @@ class ConsoleHandler(BaseHTTPRequestHandler):
             if path == "/api/overview":
                 data = self.app.overview()
             elif path == "/api/batches":
-                data = {"batches": self.app._batch_rows(read_state())}
+                provider = query.get("provider", [""])[0] or None
+                status = query.get("status", [""])[0] or None
+                search = query.get("search", [""])[0] or None
+                limit = int(query.get("limit", ["1000"])[0])
+                data = {"batches": management.list_batches(provider, status, search, limit)}
+            elif path == "/api/batches/detail":
+                batch_id = query.get("batch_id", [""])[0]
+                if not batch_id:
+                    raise ConsoleError("batch_id is required")
+                data = self.app.batch_detail(batch_id)
             elif path == "/api/escalations":
                 data = {"escalations": read_escalations(200)}
             elif path == "/api/history":
@@ -683,6 +727,21 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 data = {"provider": provider, "model": model.strip()}
             elif path == "/api/batches/submit":
                 data = self.app.submit(body)
+            elif path == "/api/batches/poll":
+                batch_id = body.get("batch_id")
+                if not isinstance(batch_id, str) or not batch_id:
+                    raise ConsoleError("batch_id is required")
+                data = self.app.poll_batch(batch_id)
+            elif path == "/api/batches/cancel":
+                batch_id = body.get("batch_id")
+                if not isinstance(batch_id, str) or not batch_id:
+                    raise ConsoleError("batch_id is required")
+                data = self.app.cancel_batch(batch_id)
+            elif path == "/api/batches/archive":
+                batch_id = body.get("batch_id")
+                if not isinstance(batch_id, str) or not batch_id:
+                    raise ConsoleError("batch_id is required")
+                data = self.app.archive_batch(batch_id)
             elif path == "/api/pipeline/poll":
                 data = self.app.poll()
             elif path == "/api/escalations/review":

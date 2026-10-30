@@ -115,6 +115,12 @@
 
       <section id="page-batches" class="page">
         <div class="section-intro"><div><p class="eyebrow">PIPELINE</p><h2>All batches</h2><p class="muted">Tracked provider work, newest first.</p></div><button class="primary" id="open-submit-2">Submit batch</button></div>
+        <div class="batch-toolbar">
+          <input id="batch-search" type="search" placeholder="Search batch, request, model, or owner…">
+          <select id="batch-provider-filter"><option value="">All providers</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="groq">Groq</option></select>
+          <select id="batch-status-filter"><option value="">All statuses</option><option value="running">Running</option><option value="submitted">Submitted</option><option value="cancelling">Cancelling</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="cancelled">Cancelled</option></select>
+          <button class="secondary" id="refresh-batches">Refresh</button>
+        </div>
         <article class="panel"><div id="all-batches" class="table-wrap"></div></article>
       </section>
 
@@ -170,6 +176,18 @@
       <div class="dialog-actions"><button class="secondary" id="dry-run" type="button">Dry run</button><button class="primary" id="send-batch" type="submit">Submit batch</button></div>
       <p id="submit-message" class="form-message" role="status"></p>
     </form>
+  </dialog>
+
+  <dialog id="batch-dialog" class="batch-dialog">
+    <div class="dialog-head"><div><p class="eyebrow">BATCH MANAGEMENT</p><h2 id="batch-dialog-title">Batch details</h2></div><button class="icon-button" id="close-batch-dialog" aria-label="Close">×</button></div>
+    <div id="batch-detail-content" class="batch-detail"></div>
+    <div class="dialog-actions batch-actions">
+      <button class="secondary" id="batch-download">Download JSON</button>
+      <button class="secondary" id="batch-poll-one">Poll now</button>
+      <button class="danger" id="batch-cancel">Cancel at provider</button>
+      <button class="ghost" id="batch-archive">Dismiss from list</button>
+    </div>
+    <p id="batch-message" class="form-message" role="status"></p>
   </dialog>
 
   <div id="toast-region" class="toast-region" aria-live="polite"></div>

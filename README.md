@@ -90,6 +90,7 @@ The console includes:
 - Provider credential setup for Anthropic, OpenRouter, and Groq
 - Credential connection tests and live model discovery
 - Pipeline overview, active batches, history, metrics, and logs
+- Batch management with search, provider/status filters, details, single-batch polling, provider-aware cancellation, local dismissal, and JSON download
 - Escalation review and result-file inventory
 - Batch submission with dry-run and explicit paid-operation confirmation
 - One-click poll/router cycles
@@ -347,7 +348,7 @@ bash batch.sh metrics
 
 ```bash
 python3 test_batch_pipeline.py --unit
-python3 -m unittest test_batch_console test_batch_credentials test_mcp_regressions test_batch_gateway
+python3 -m unittest test_batch_console test_batch_management test_batch_credentials test_mcp_regressions test_batch_gateway
 ruff check .
 ```
 
@@ -376,6 +377,7 @@ Live tests can incur provider charges.
 batch.sh, batch.fish              Main CLI wrappers
 batch-chat.fish                    Fish wrapper for one-message batch chat
 batch_console.py                   Local authenticated web console
+batch_management.py                Provider-aware batch lifecycle helpers
 console/                           Console HTML, CSS, and JavaScript
 start-console.sh, start-console.fish  Console launchers
 batch-submit.py                    Legacy alias for batch_submit.py
@@ -398,7 +400,7 @@ docs/tui.gif                        TUI demonstration
 ## Limitations
 
 - Groq has been exercised against the live API. OpenRouter has been smoke-tested. Anthropic is covered by offline integration tests only.
-- The pipeline does not automatically resubmit failed paid batches. Check the existing batch ID before retrying to avoid duplicate charges.
+- The pipeline does not automatically resubmit failed paid batches. Check the existing batch ID before retrying to avoid duplicate charges. The console does not offer retry until original prompts can be retained and replayed safely.
 - Provider batch models and limits change over time.
 - Escalations are files; no notification system is included.
 - Anthropic history may contain tokens without a cost estimate.

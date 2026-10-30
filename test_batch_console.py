@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import batch_console
+from batch_common import write_json_atomic
 from batch_console import ConsoleApp, ConsoleServer
 
 
@@ -122,6 +123,40 @@ class ConsoleTests(unittest.TestCase):
         self.assertNotIn("gsk_abcdef", text)
         self.assertNotIn("Bearer abcdef", text)
         self.assertIn("[REDACTED]", text)
+
+    def test_batch_management_list_detail_and_archive(self):
+        root = Path(self.temp.name)
+        state_file = root / "data" / ".batch-state"
+        write_json_atomic(state_file, {
+            "batch-one": {
+                "custom_id": "request-one", "custom_ids": ["request-one"],
+                "provider": "groq", "model": "openai/gpt-oss-20b", "status": "completed",
+                "submitted_at_unix": 1000.0,
+            },
+            "batch-two": {
+                "custom_id": "request-two", "custom_ids": ["request-two"],
+                "provider": "openrouter", "model": "vendor/model", "status": "running",
+                "submitted_at_unix": 2000.0,
+            },
+        }, indent=2)
+
+        status, _, body = self.request("/api/batches?provider=groq")
+        self.assertEqual(status, 200)
+        batches = json.loads(body)["batches"]
+        self.assertEqual([batch["batch_id"] for batch in batches], ["batch-one"])
+
+        status, _, body = self.request("/api/batches/detail?batch_id=batch-one")
+        self.assertEqual(status, 200)
+        detail = json.loads(body)
+        self.assertEqual(detail["request_id"], "request-one")
+        self.assertTrue(detail["capabilities"]["archive"])
+
+        status, _, body = self.request("/api/batches/archive", "POST", {"batch_id": "batch-one"})
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["archived"])
+        state = json.loads(state_file.read_text())
+        self.assertNotIn("batch-one", state)
+        self.assertIn("batch-two", state)
 
     def test_overview_reports_pipeline_counts(self):
         status, _, body = self.request("/api/overview")

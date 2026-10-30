@@ -164,6 +164,11 @@ class AnthropicProvider(BatchProvider):
             "ended_at": self._to_unix(batch.ended_at),
         }
 
+    def cancel_batch(self, batch_id: str) -> bool:
+        """Ask Anthropic to cancel an in-progress message batch."""
+        batch = self.client.beta.messages.batches.cancel(batch_id)
+        return getattr(batch, "processing_status", "") not in ("ended", "canceled", "cancelled")
+
     @staticmethod
     def _to_unix(value) -> Optional[float]:
         """Convert an SDK datetime to a unix timestamp (None if missing)."""

@@ -1608,6 +1608,20 @@ def test_p1_12_terminal_states():
         assert_eq((tmp / "logs" / "poll.log").read_text().count("FAILED"), 1)
 
 
+@test("Batch management: polling one batch does not poll other batches")
+def test_batch_management_poll_one():
+    from providers.base import BatchStatus
+    with isolated_env() as tmp:
+        poll = load_script("batch-poll.py")
+        write_state(tmp, {"one": batch_entry(custom_id="r1"),
+                          "two": batch_entry(custom_id="r2")})
+        provider = FakePollProvider({"one": BatchStatus.PROCESSING,
+                                     "two": BatchStatus.PROCESSING})
+        poll.get_provider = lambda name=None, **kwargs: provider
+        quietly(poll.poll_batches, batch_ids=["one"])
+        assert_eq(provider.retrieved, ["one"])
+
+
 @test("P1-13: poll --provider only looks at that provider's batches")
 def test_p1_13_provider_filter():
     from providers.base import BatchStatus

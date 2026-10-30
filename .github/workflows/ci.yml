@@ -38,7 +38,7 @@ jobs:
       - name: Unit tests
         run: |
           python test_batch_pipeline.py --unit
-          python -m unittest test_batch_console test_batch_credentials test_mcp_regressions test_batch_gateway
+          python -m unittest test_batch_console test_batch_management test_batch_credentials test_mcp_regressions test_batch_gateway
 
       - name: Bash launcher syntax
         run: bash -n start-server.sh start-console.sh

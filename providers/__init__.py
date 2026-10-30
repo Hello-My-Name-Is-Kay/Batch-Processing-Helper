@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 import importlib
-from .base import BatchStatus
+from .base import BatchProvider, BatchStatus
 
 # Lazy-loaded provider registry: maps provider name -> (module_name, class_name)
 # Providers are only imported when get_provider() is called with that name.
@@ -64,4 +64,16 @@ def list_providers():
     """List all available provider names."""
     return list(_PROVIDERS.keys())
 
-__all__ = ["_PROVIDERS", "get_provider", "list_providers", "BatchStatus"]
+
+def provider_supports_cancel(name: str) -> bool:
+    """Return whether a registered provider implements batch cancellation."""
+    if name not in _PROVIDERS:
+        return False
+    module_name, class_name = _PROVIDERS[name]
+    module = importlib.import_module(module_name, package=__name__)
+    provider_class = getattr(module, class_name)
+    return provider_class.cancel_batch is not BatchProvider.cancel_batch
+
+__all__ = [
+    "_PROVIDERS", "get_provider", "list_providers", "provider_supports_cancel", "BatchStatus",
+]
