@@ -1,7 +1,6 @@
 """Alibaba QWEN batch API provider implementation."""
 
 import os
-import time
 import requests
 from typing import Optional
 from .base import BatchProvider, BatchResult, BatchStatus
@@ -91,7 +90,7 @@ class QWENProvider(BatchProvider):
             response.raise_for_status()
             return response.json()["batch_id"]
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to submit QWEN batch: {e}")
+            raise RuntimeError(f"Failed to submit QWEN batch: {e}") from e
 
     def retrieve_batch(self, batch_id: str) -> dict:
         """Get batch status from QWEN API.
@@ -135,7 +134,7 @@ class QWENProvider(BatchProvider):
                 "raw": data
             }
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to retrieve QWEN batch {batch_id}: {e}")
+            raise RuntimeError(f"Failed to retrieve QWEN batch {batch_id}: {e}") from e
 
     def get_results(self, batch_id: str) -> list[BatchResult]:
         """Retrieve completed batch results.
@@ -182,7 +181,7 @@ class QWENProvider(BatchProvider):
 
             return results
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to get QWEN batch results {batch_id}: {e}")
+            raise RuntimeError(f"Failed to get QWEN batch results {batch_id}: {e}") from e
 
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a batch (if supported)."""

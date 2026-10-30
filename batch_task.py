@@ -3,7 +3,6 @@
 
 import json
 import os
-import sys
 import uuid
 from datetime import datetime
 
@@ -99,7 +98,7 @@ def save_to_file(data: dict, filename: str = None):
 
 
 def main():
-    print(f"=== BATCH TASK PIPELINE ===")
+    print("=== BATCH TASK PIPELINE ===")
     print(f"Task ID: {TASK_ID}")
     print(f"Started at: {datetime.utcnow().isoformat()}")
     print()
@@ -152,13 +151,13 @@ def main():
     
     print("\n" + "=" * 50)
     print("BATCH TASK PIPELINE COMPLETE!")
-    print(f"=" * 50)
+    print("=" * 50)
     print(f"Task ID: {TASK_ID}")
-    print(f"Files saved:")
-    print(f"  - pipeline_output.json")
-    print(f"  - raw_task.json")
-    print(f"  - metadata.json")
-    print(f"  - batch_run.log")
+    print("Files saved:")
+    print("  - pipeline_output.json")
+    print("  - raw_task.json")
+    print("  - metadata.json")
+    print("  - batch_run.log")
     print()
 
 

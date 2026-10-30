@@ -2,9 +2,7 @@
 """Retry logic for failed batches with exponential backoff."""
 
 import json
-import os
 import sys
-import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
@@ -164,7 +162,7 @@ def main():
 
     if command == "status":
         stats = queue.get_stats()
-        print(f"Retry Queue Status:")
+        print("Retry Queue Status:")
         print(f"  Pending: {stats['pending']}")
         print(f"  Completed: {stats['done']}")
         print(f"  Exhausted: {stats['exhausted']}")

@@ -94,7 +94,7 @@ class GeminiProvider(BatchProvider):
             response.raise_for_status()
             return response.json()["name"].split("/")[-1]
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to submit Gemini batch: {e}")
+            raise RuntimeError(f"Failed to submit Gemini batch: {e}") from e
 
     def retrieve_batch(self, batch_id: str) -> dict:
         """Get batch status from Google Gemini.
@@ -137,7 +137,7 @@ class GeminiProvider(BatchProvider):
                 "raw": data
             }
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to retrieve Gemini batch {batch_id}: {e}")
+            raise RuntimeError(f"Failed to retrieve Gemini batch {batch_id}: {e}") from e
 
     def get_results(self, batch_id: str) -> list[BatchResult]:
         """Retrieve completed batch results.
@@ -181,7 +181,7 @@ class GeminiProvider(BatchProvider):
 
             return results
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to get Gemini batch results {batch_id}: {e}")
+            raise RuntimeError(f"Failed to get Gemini batch results {batch_id}: {e}") from e
 
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a batch."""

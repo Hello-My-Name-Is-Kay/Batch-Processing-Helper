@@ -98,7 +98,7 @@ class TogetherProvider(BatchProvider):
             response.raise_for_status()
             return response.json()["id"]
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to submit Together.ai batch: {e}")
+            raise RuntimeError(f"Failed to submit Together.ai batch: {e}") from e
 
     def retrieve_batch(self, batch_id: str) -> dict:
         """Get batch status from Together.ai.
@@ -141,7 +141,7 @@ class TogetherProvider(BatchProvider):
                 "raw": data
             }
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to retrieve Together.ai batch {batch_id}: {e}")
+            raise RuntimeError(f"Failed to retrieve Together.ai batch {batch_id}: {e}") from e
 
     def get_results(self, batch_id: str) -> list[BatchResult]:
         """Retrieve completed batch results.
@@ -185,7 +185,7 @@ class TogetherProvider(BatchProvider):
 
             return results
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Failed to get Together.ai batch results {batch_id}: {e}")
+            raise RuntimeError(f"Failed to get Together.ai batch results {batch_id}: {e}") from e
 
     def cancel_batch(self, batch_id: str) -> bool:
         """Cancel a batch."""

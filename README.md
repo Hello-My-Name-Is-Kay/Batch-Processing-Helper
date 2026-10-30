@@ -2,7 +2,7 @@
 
 Async batch-processing pipeline for LLM work. Submit tasks to **16 AI providers**, poll for results automatically, classify outputs with an LLM, and track costs/latency. Send a batch with one command. Review only the items that need attention.
 
-**Contents:** [TL;DR](#tldr) · [Why](#why) · [How it works](#how-it-works) · [Features](#features) · [16 Providers](#supported-providers-16-total) · [Quick start](#quick-start) · [Commands](#commands) · [Retry & Export](#retry--export) · [Results and cost](#results-history-and-cost) · [Development](#development) · [License](#license)
+**Contents:** [TL;DR](#tldr) · [Why](#why) · [How it works](#how-it-works) · [Features](#features) · [16 Providers](#supported-providers-16-total) · [Quick start](#quick-start) · [Commands](#commands) · [MCP](#mcp-server) · [Pi batch models](#pi-batch-models-groq-and-openrouter) · [Configuration](#configuration) · [Retry & Export](#retry--export) · [Results and cost](#results-history-and-cost) · [Development](#development) · [License](#license)
 
 ---
 
@@ -73,7 +73,7 @@ flowchart LR
 - **CLI + Terminal UI** — `bash batch.sh` or `bash batch.sh tui` (5-tab Textual dashboard)
 - **Cost Tracking** — Per-request, per-provider, per-model aggregates (latency, tokens, cost)
 - **Export Results** — CSV, JSON, SQLite, Parquet formats
-- **MCP Server** — Claude Desktop integration (`batch-mcp.py`)
+- **MCP Server** — Claude Desktop and Pi integration (`batch-mcp.py`). Use `batch_models` (optional `provider: "groq"`) to fetch the complete live Groq catalog from `GET https://api.groq.com/openai/v1/models`, authenticated with `GROQ_API_KEY`. All returned models and metadata are preserved; catalog membership does not guarantee batch chat support.
 - **Skills** — Claude Code skill + Claude Desktop skill
 - **Unit Tests** — Offline tests, optional live tests with real providers
 
@@ -84,7 +84,7 @@ flowchart LR
 | # | Provider | Setup | Default Model | Use Case |
 |---|----------|-------|---------------|----------|
 | 1 | **Anthropic** | `ANTHROPIC_API_KEY` | claude-opus-4-1 | Premium, reliable |
-| 2 | **OpenRouter** | `OPENROUTER_API_KEY` | deepseek-v4 | Multi-model aggregator |
+| 2 | **OpenRouter** | `OPENROUTER_API_KEY` | deepseek/deepseek-v4.1-flash | Multi-model aggregator |
 | 3 | **Groq** | `GROQ_API_KEY` | openai/gpt-oss-20b | Ultra-fast, cheap |
 | 4 | **QWEN** | `QWEN_API_KEY` | qwen-turbo | Alibaba, competitive pricing |
 | 5 | **DeepSeek** | `DEEPSEEK_API_KEY` | deepseek-chat | High performance, affordable |
@@ -110,7 +110,7 @@ flowchart LR
 
 ## Quick start
 
-Requirements: Linux or macOS, Python 3.9+, an API key for at least one provider.
+Requirements: Linux or macOS, Python 3.9 or newer, an API key for at least one provider.
 
 ```bash
 git clone https://github.com/Hello-My-Name-Is-Kay/Batch-Processing-Helper.git
@@ -132,7 +132,7 @@ export MISTRAL_API_KEY="..."
 Send a test batch:
 
 ```bash
-bash batch.sh send "Summarize batch APIs in 3 bullets"
+bash batch.sh --provider groq send "Summarize batch APIs in 3 bullets"
 bash batch.sh status
 ```
 
@@ -156,6 +156,9 @@ bash batch.sh status
 | `bash batch.sh providers` | List all 16 available providers |
 | `python batch_retry.py ready` | Show batches ready for retry |
 | `python batch_retry.py status` | Retry queue statistics |
+
+**Terminal UI Example:**
+![Batch Processing TUI Dashboard](docs/tui.gif)
 
 ---
 
@@ -184,14 +187,272 @@ bash batch.sh export --format sqlite --output results.db
 
 ---
 
+## MCP server
+
+The MCP server uses **stdio**: the host launches it and exchanges newline-delimited
+JSON-RPC messages over stdin/stdout. It does not listen on an HTTP port. A standalone
+process started with closed stdin exits; a separate terminal cannot connect to it
+with `curl`. Diagnostic logging may use stderr; stdout is reserved for JSON-RPC.
+
+| Tool | Purpose |
+|------|---------|
+| `batch_providers` | List providers and Groq/OpenRouter credential presence; does not validate credentials |
+| `batch_models` | Fetch Groq's complete live model catalog; accepts `provider: "groq"` only |
+| `batch_send` | Submit a task; accepts `task`, `provider`, and `model` |
+| `batch_status` | View locally tracked batch counts and recent activity |
+| `batch_poll` | Run one collection cycle for locally tracked batches |
+| `batch_history` | View completion metrics; accepts `limit` from 1 to 1000 |
+| `batch_stats` | View provider/model aggregates |
+| `batch_escalations` | List results awaiting human review |
+
+For example, call `batch_send` with:
+
+```json
+{"task": "hello?", "provider": "groq", "model": "openai/gpt-oss-120b"}
+```
+
+Use `provider: "openrouter"` and an exact OpenRouter model ID for OpenRouter.
+A successful submission returns a **batch ID, not the model's answer**. Polling and
+provider processing happen separately. `batch_history` contains metrics rather
+than complete model responses; collected responses are stored under the pipeline's
+responses directory.
+
+`batch_models` calls `GET https://api.groq.com/openai/v1/models` with a bearer
+`GROQ_API_KEY` and returns all model records and metadata without filtering.
+Catalog membership does not guarantee support for batch chat completions: audio,
+guard, and other specialized models may require different endpoints.
+
+### Connect the MCP to Pi
+
+Merge the following entry into `~/.pi/agent/mcp.json` for global use, or
+`.pi/mcp.json` for this project. Replace `/absolute/path/to/checkout` with your
+checkout path; do not overwrite unrelated servers.
+
+```json
+{
+  "mcpServers": {
+    "batch-processing": {
+      "command": "/absolute/path/to/checkout/venv/bin/python",
+      "args": ["/absolute/path/to/checkout/batch-mcp.py"],
+      "cwd": "/absolute/path/to/checkout",
+      "env": {
+        "BATCH_PROVIDER": "groq",
+        "GROQ_BATCH_MODEL": "openai/gpt-oss-120b"
+      },
+      "timeout": 120
+    }
+  }
+}
+```
+
+If OpenRouter credentials are stored in Pi, add this field to the server's `env`:
+
+```json
+"OPENROUTER_API_KEY": "!pi auth print-api-key --provider openrouter"
+```
+
+This resolves the key at launch without storing another copy in MCP configuration.
+Alternatively, inherit exported provider keys or use `--setup` below.
+
+Run `pi mcp list` to check the connection. In a running Pi session, use `/reload`
+after configuration changes and `/mcp` to inspect or reconnect the server. Project
+configuration overrides a global entry with the same name and requires project
+trust. Pi starts and stops the stdio server; no separate `nohup` process is needed.
+
+## Pi batch models (Groq and OpenRouter)
+
+**The MCP and the chat batch gateway are separate interfaces.** MCP tools submit
+and monitor pipeline work. Selecting a model in Pi's `/model` picker instead sends
+chat completions through `batch_gateway.py`, an OpenAI-compatible HTTP service at
+`http://127.0.0.1:8787/v1`.
+
+The gateway creates a provider batch, waits for it, and returns the answer to Pi.
+Streaming is emulated: keep-alive messages are sent while waiting, then the final
+answer is delivered. Batch latency can be much longer than real-time chat.
+
+### Start the gateway
+
+Fish launcher (uses this checkout's virtualenv and works from any directory):
+
+```fish
+./start-server.fish               # start the HTTP gateway in the background
+./start-server.fish --foreground  # run in this terminal
+./start-server.fish --mcp         # separate stdio MCP server, not an HTTP service
+./start-server.fish --help
+```
+
+Equivalent Bash launcher:
+
+```bash
+./start-server.sh               # start the HTTP gateway in the background
+./start-server.sh --foreground  # run in this terminal
+./start-server.sh --mcp         # separate stdio MCP server
+./start-server.sh --help
+```
+
+Both launchers use the same options and require no virtualenv activation.
+
+The `--mcp` mode needs an MCP host to exchange requests over stdin/stdout; it does
+not attach to an existing Pi session. Normally let Pi launch the MCP itself.
+
+With provider keys configured, you can also run directly from this checkout:
+
+```bash
+venv/bin/python batch_gateway.py start
+curl -fsS http://127.0.0.1:8787/health
+```
+
+Management commands:
+
+```bash
+venv/bin/python batch_gateway.py stats
+venv/bin/python batch_gateway.py restart
+venv/bin/python batch_gateway.py stop
+```
+
+`restart` and `stop` interrupt gateway requests in progress; they do not cancel
+batches already accepted by providers. Background startup is not automatic startup
+after reboot.
+
+At startup, the gateway loads saved setup credentials. Groq also supports its
+existing environment and gateway `.env` lookup. OpenRouter uses
+`OPENROUTER_API_KEY`, falling back to `pi auth print-api-key --provider openrouter`.
+Provider keys stay in the gateway; Pi authenticates to it with a **gateway key**.
+
+### Configure Pi's model picker
+
+Merge a provider entry into `~/.pi/agent/models.json`:
+
+```json
+{
+  "providers": {
+    "batch-gateway": {
+      "baseUrl": "http://127.0.0.1:8787/v1",
+      "api": "openai-completions",
+      "apiKey": "!batch-gateway token",
+      "models": [
+        {"id": "openai/gpt-oss-120b", "name": "GPT OSS 120B (Groq batch)"}
+      ]
+    }
+  }
+}
+```
+
+The credential command above requires the installed `batch-gateway` command.
+For a checkout-only installation, use an absolute command such as
+`!/absolute/path/to/checkout/venv/bin/python /absolute/path/to/checkout/batch_gateway.py token`.
+Both commands print a gateway credential: do not paste their output into logs.
+
+Model registration does not start the gateway. A connection error with the
+`batch-gateway` provider can mean port 8787 has no listener even when the MCP is
+connected successfully.
+
+### Discover and register OpenRouter batch models
+
+The gateway reads OpenRouter's live `/models` catalog, selects text-output IDs
+ending in `:batch`, and exposes them with an `openrouter/` routing prefix. They
+correspond to the chat/text models on
+[OpenRouter's batch model page](https://openrouter.ai/models?variant=batch).
+Embedding batch models are not registered as chat models. Counts change over time;
+model availability is not hard-coded.
+
+Examples of gateway IDs:
+
+- `openai/gpt-oss-120b` — Groq
+- `openrouter/deepseek/deepseek-v4.1-flash:batch` — OpenRouter
+- `openrouter/openai/gpt-6.1-terra:batch` — OpenRouter
+
+OpenRouter has separate per-model queues, preventing mixed-model batches. The
+routing prefix and `:batch` catalog suffix are removed before submitting to its
+JSON `/batches` API. There is no fallback to paid real-time chat completions.
+
+For an existing Pi `batch-gateway` configuration with a **literal gateway key**,
+refresh the OpenRouter entries with:
+
+```bash
+venv/bin/python sync_pi_batch_models.py
+```
+
+The sync utility requires OpenRouter credentials in the environment or Pi's auth
+store, a running gateway, and a literal `apiKey` in Pi's gateway entry. It currently
+does not resolve credential commands such as the example above. It backs up
+`models.json`, preserves unrelated/Groq models, and leaves Pi's default model
+unchanged. Restart the gateway before syncing to pick up a refreshed catalog.
+Open `/model` in Pi to reload its model list.
+
+Test a selected model through Pi:
+
+```bash
+pi --provider batch-gateway --model 'openrouter/deepseek/deepseek-v4.1-flash:batch' \
+  --no-session --no-tools --no-mcp --no-context-files -p 'hello?'
+```
+
+This submits a real, potentially billable batch. Catalog entries are **not** an
+account-access guarantee: some endpoints require your own upstream provider key
+(BYOK), configured at OpenRouter. An OpenRouter API key alone may not suffice.
+
+### Logs and OpenRouter status delays
+
+Gateway logs and request records are separate from MCP pipeline history:
+
+- `~/.local/state/batch-gateway/gateway.log` — startup, submissions, polling, errors
+- `~/.local/state/batch-gateway/ledger.jsonl` — request outcomes, batch IDs, token usage
+- `~/.config/batch-gateway/keys.json` — private gateway access keys
+
+The state/config paths can be overridden with `BATCH_GATEWAY_STATE` and
+`BATCH_GATEWAY_HOME`. Gateway batches are not automatically included in MCP
+`batch_status`, which reads the separate pipeline state.
+
+OpenRouter may accept a batch before its status endpoint can see it. The gateway
+retries **404 status lookups for up to 60 seconds** after submission, bounded by the
+overall wait timeout, using the **same batch ID**. Authentication errors are not
+hidden by this retry. It never resubmits a batch to recover from a visibility delay.
+
+A failed or timed-out Pi turn does not cancel provider work. Before retrying the
+prompt, check the existing batch ID to avoid duplicate paid submissions. Already
+failed Pi turns do not automatically resume when the provider finishes.
+
 ## Configuration
+
+### MCP provider key setup
+
+```bash
+venv/bin/python batch-mcp.py --setup
+```
+
+The terminal menu lists providers and lets you **add/change** keys using hidden input,
+or **remove** saved keys. It never displays key values. Anthropic and Claude share
+one key; Modal has a token ID and secret.
+
+Keys are stored as **plaintext** in an owner-only (`0600`) file at
+`~/.config/batch-processing-helper/credentials.json` (or under `XDG_CONFIG_HOME`).
+Keep this file private and out of source control/backups shared with others.
+Saved keys override credentials inherited from the environment or Pi for the MCP
+process and its poll subprocess. Removing a saved key restores the inherited
+fallback—it does not revoke that key or remove it from Pi's auth store.
+Reconnect/reload the MCP after changes. The gateway also loads this credential
+file at startup; restart it separately to apply changes. The setup menu reports
+only its own process environment: OpenRouter can show `not set` there even when
+Pi injects its key into the MCP at launch.
+
+In fish, inherit the existing OpenRouter credential from Pi without displaying it:
+
+```fish
+set -gx OPENROUTER_API_KEY (pi auth print-api-key --provider openrouter)
+venv/bin/python batch-mcp.py --setup
+```
+
+This sets the variable for the current shell and its child processes; it does not
+save another copy in the setup file.
 
 Set in `.env` (git-ignored) or pass as environment variables:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `BATCH_PROVIDER` | anthropic | Default provider (anthropic, groq, mistral, etc.) |
-| `BATCH_MODEL` | [provider-specific] | Model for batch |
+| `BATCH_MODEL` | [provider-specific] | Shared fallback model; avoid setting this globally when mixing providers |
+| `GROQ_BATCH_MODEL` | openai/gpt-oss-20b | Groq-specific model override |
+| `OPENROUTER_BATCH_MODEL` | deepseek/deepseek-v4.1-flash | OpenRouter-specific model override |
 | `BATCH_POLL_INTERVAL` | 120 | Seconds between polls (cron job) |
 | `BATCH_DIR` | `.batch-data/` | Runtime data directory |
 
@@ -245,27 +506,13 @@ python3 test_batch_pipeline.py --unit                  # offline, no API calls
 python3 test_batch_pipeline.py --live                  # needs OPENROUTER_API_KEY
 python3 test_batch_pipeline.py                         # everything
 python3 test_batch_pipeline.py --unit --filter P1-12   # only tests whose name contains the text
+python3 -m unittest test_batch_credentials test_mcp_regressions test_batch_gateway
 ruff check .                                           # lint (settings in pyproject.toml)
 ```
 
-## Development
-
-### Adding a provider
-
-1. Create `providers/myapi_provider.py` subclassing `BatchProvider`
-2. Implement: `create_batch()`, `retrieve_batch()`, `get_results()`, `build_request()`
-3. Register in `providers/__init__.py`
-4. Add tests in `test_new_providers_2.py`
-
-See `providers/mistral_provider.py` for a reference implementation.
-
-### Tests
-
-```bash
-python3 test_batch_pipeline.py --unit                  # Offline
-python3 test_batch_pipeline.py --live                  # Real API (slow)
-python3 test_batch_pipeline.py                         # Both
-```
+The regression tests are offline. They cover private credential storage, MCP input
+validation and error reporting, and bounded OpenRouter 404 polling without duplicate
+submissions. Live gateway/Pi tests are separate and can incur provider charges.
 
 ### Project layout
 
@@ -274,16 +521,22 @@ batch.sh, batch.fish          CLI wrappers
 batch-submit.py               Submit requests
 batch-poll.py                 Poll batch status
 batch-router.py               LLM result classifier
-batch-retry.py                Retry queue with backoff
+batch_retry.py                Retry queue with backoff
 batch-status.py               Status view
 batch-metrics.py              Metrics aggregation
-batch-mcp.py                  MCP server (Claude Desktop)
+batch-mcp.py                  Stdio MCP server (Pi, Claude Desktop, other hosts)
+batch_credentials.py          Private provider-key setup and loading
+batch_gateway.py              HTTP chat-to-batch gateway (Groq + OpenRouter)
+sync_pi_batch_models.py        Register gateway OpenRouter models in Pi
 batch_tui.py                  Terminal UI (5 tabs)
 batch-orchestrator.sh         Cron job scheduler
 providers/                    16 provider implementations
 .batch-data/                  Runtime data (git-ignored)
 requirements.txt              Python dependencies
-tests/                        Unit + integration tests
+test_batch_pipeline.py        Pipeline tests (offline and optional live)
+test_batch_credentials.py     Credential setup regression tests
+test_mcp_regressions.py        MCP regression tests
+test_batch_gateway.py         Gateway visibility-delay regression tests
 docs/                         Provider guides, troubleshooting
 ```
 

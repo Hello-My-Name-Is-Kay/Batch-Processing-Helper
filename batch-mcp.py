@@ -40,10 +40,14 @@ from datetime import datetime
 _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE))
 
-from batch_common import (
-    format_age, format_duration, pipeline_counts, read_escalations, read_state,
-)
-from batch_history import read_history, get_aggregates
+try:
+    from batch_common import (
+        format_age, format_duration, pipeline_counts, read_escalations, read_state,
+    )
+    from batch_history import read_history, get_aggregates
+except ImportError as e:
+    print(f"FATAL: Failed to import batch modules: {e}", file=sys.stderr)
+    sys.exit(1)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -62,14 +66,29 @@ class BatchMcpServer:
     def tools(self) -> list[dict]:
         return [
             {
+                "name": "batch_models",
+                "description": "Fetch Groq's complete live model catalog from GET /models. Includes all returned models and metadata; catalog membership does not guarantee batch chat support.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "provider": {"type": "string", "enum": ["groq"], "default": "groq"},
+                    },
+                },
+            },
+            {
+                "name": "batch_providers",
+                "description": "List available batch providers and Groq/OpenRouter credential readiness (never returns keys).",
+                "inputSchema": {"type": "object", "properties": {}},
+            },
+            {
                 "name": "batch_send",
-                "description": "Submit a batch request to the LLM batch pipeline",
+                "description": "Submit an asynchronous batch to Groq or OpenRouter. Set provider explicitly and use that provider's exact model ID. Submission is not a completed answer; use batch_poll to collect results.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "task": {"type": "string", "description": "Task description to submit"},
-                        "provider": {"type": "string", "description": "Provider (anthropic/openrouter/groq)", "default": None},
-                        "model": {"type": "string", "description": "Model name", "default": None},
+                        "provider": {"type": "string", "description": "Provider (e.g. anthropic/openrouter/groq)"},
+                        "model": {"type": "string", "description": "Model name (Groq: openai/gpt-oss-120b)"},
                     },
                     "required": ["task"],
                 },
@@ -122,7 +141,35 @@ class BatchMcpServer:
 
     def handle_tool_call(self, name: str, args: dict) -> dict:
         try:
+            if not isinstance(args, dict):
+                raise ValueError("Tool arguments must be an object")
+            if name == "batch_models":
+                provider_name = args.get("provider", "groq")
+                if provider_name != "groq":
+                    raise ValueError("Live model discovery currently supports provider='groq' only")
+                from providers import get_provider
+                catalog = get_provider("groq").list_models()
+                data = {
+                    "provider": "groq",
+                    "catalog": catalog,
+                    "note": "Complete live catalog, without filtering. Not all listed models necessarily support batch chat completions.",
+                }
+                return {"content": [{"type": "text", "text": json.dumps(data, indent=2)}]}
+            if name == "batch_providers":
+                from providers import list_providers
+                data = {
+                    "providers": list_providers(),
+                    "credentials_configured": {
+                        "groq": bool(os.environ.get("GROQ_API_KEY")),
+                        "openrouter": bool(os.environ.get("OPENROUTER_API_KEY")),
+                    },
+                    "default_provider": os.environ.get("BATCH_PROVIDER", "anthropic"),
+                    "note": "Use an explicit provider and exact model ID with batch_send. Credential presence does not verify API access or batch-model support.",
+                }
+                return {"content": [{"type": "text", "text": json.dumps(data, indent=2)}]}
             if name == "batch_send":
+                if not isinstance(args.get("task"), str) or not args["task"].strip():
+                    raise ValueError("task must be a non-empty string")
                 return self._send(args)
             elif name == "batch_status":
                 return self._status()
@@ -173,7 +220,7 @@ class BatchMcpServer:
                           key=lambda x: -(x[1].get("submitted_at_unix", 0) or 0))[:5]
             for bid, info in items:
                 recent.append({
-                    "batch_id": bid[:20],
+                    "batch_id": bid,
                     "status": info.get("status"),
                     "provider": info.get("provider"),
                     "age": format_age(info.get("submitted_at_unix")),
@@ -197,6 +244,8 @@ class BatchMcpServer:
         }
 
     def _history(self, limit: int = 10) -> dict:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be an integer between 1 and 1000")
         entries = read_history()[:limit]
         if not entries:
             return {"content": [{"type": "text", "text": "No history entries yet."}]}
@@ -252,6 +301,7 @@ class BatchMcpServer:
             data = {"completed": 0, "stderr": result.stderr[:200]}
 
         return {
+            "isError": result.returncode != 0,
             "content": [{
                 "type": "text",
                 "text": json.dumps({
@@ -264,9 +314,18 @@ class BatchMcpServer:
     # ── JSON-RPC handler ──────────────────────────────────────────
 
     def handle_request(self, req: dict) -> dict | None:
-        method = req.get("method")
+        if not isinstance(req, dict) or req.get("jsonrpc") != "2.0" or not isinstance(req.get("method"), str):
+            return {"jsonrpc": "2.0", "id": None,
+                    "error": {"code": -32600, "message": "Invalid Request"}}
+        method = req["method"]
         req_id = req.get("id")
+        # Never execute a tool from a notification or reply to notifications.
+        if "id" not in req:
+            return None
         params = req.get("params", {})
+        if not isinstance(params, dict):
+            return {"jsonrpc": "2.0", "id": req_id,
+                    "error": {"code": -32602, "message": "params must be an object"}}
 
         if method == "tools/list":
             return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": self.tools}}
@@ -306,6 +365,25 @@ class BatchMcpServer:
 # ═══════════════════════════════════════════════════════════════════
 
 def main():
+    import argparse
+    from batch_credentials import load_credentials, setup
+
+    parser = argparse.ArgumentParser(description="Batch Processing Helper MCP server (stdio)")
+    parser.add_argument("--setup", action="store_true", help="Manage provider credentials interactively")
+    args = parser.parse_args()
+    try:
+        if args.setup:
+            setup()
+            return
+        load_credentials()
+    except (ValueError, OSError) as exc:
+        print(f"Credential configuration error: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    except (EOFError, KeyboardInterrupt):
+        print("\nSetup cancelled.", file=sys.stderr)
+        return
+
+    # stdout is reserved for JSON-RPC. Diagnostic logging may use stderr.
     server = BatchMcpServer()
 
     for line in sys.stdin:
@@ -315,6 +393,8 @@ def main():
         try:
             req = json.loads(line)
         except json.JSONDecodeError:
+            print(json.dumps({"jsonrpc": "2.0", "id": None,
+                              "error": {"code": -32700, "message": "Parse error"}}), flush=True)
             continue
 
         resp = server.handle_request(req)

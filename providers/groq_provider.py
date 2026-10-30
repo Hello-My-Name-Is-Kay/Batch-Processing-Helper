@@ -167,6 +167,25 @@ class GroqProvider(BatchProvider):
             self._session.headers.update({"Authorization": f"Bearer {self.api_key}"})
         return self._session
 
+    def list_models(self) -> dict:
+        """Fetch Groq's complete live model catalog, without capability filtering.
+
+        Catalog membership alone does not establish batch endpoint support.
+        """
+        response = self.session.get(
+            f"{self.base_url}/models",
+            headers={"Content-Type": "application/json"},
+            timeout=DEFAULT_TIMEOUT,
+        )
+        response.raise_for_status()
+        catalog = response.json()
+        if not isinstance(catalog, dict) or not isinstance(catalog.get("data"), list):
+            raise ValueError("Invalid Groq model catalog: expected a data array")
+        if any(not isinstance(model, dict) or not isinstance(model.get("id"), str)
+               for model in catalog["data"]):
+            raise ValueError("Invalid Groq model catalog: each model must have a string id")
+        return catalog
+
     # ── Request building / validation (offline) ─────────────────────────
 
     def default_model(self) -> str:

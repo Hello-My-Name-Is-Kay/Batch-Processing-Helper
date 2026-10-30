@@ -5,7 +5,6 @@ Submit ONE request as a batch, poll until completed, then show the response.
 """
 
 import sys
-import os
 import time
 from pathlib import Path
 
@@ -14,11 +13,8 @@ sys.path.insert(0, str(Path(__file__).parent.resolve()))
 from batch_common import (
     resolve_paths,
     load_state,            # FIX: was missing → NameError
-    update_state,
-    validate_custom_id,
-    write_json_atomic,
-)
-from providers import get_provider, list_providers
+    )
+from providers import get_provider
 from batch_submit import submit_batch
 
 

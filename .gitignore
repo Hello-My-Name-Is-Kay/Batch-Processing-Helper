@@ -23,3 +23,23 @@ env/
 # Runtime state (ephemeral)
 *.pid
 *.lock
+*.log
+
+# Local Pi configuration, credential files, and configuration backups
+.pi/
+credentials.json
+*.backup-*
+
+# Local development scratch and generated outputs
+herdr_app_output/
+improvements-output/
+pi_rpg_project/
+providers-expansion/
+review_output/
+ui_build_output/
+metadata.json
+pipeline_output.json
+raw_task.json
+supervisor.html
+run-mcp.sh
+run-mcp-debug.sh

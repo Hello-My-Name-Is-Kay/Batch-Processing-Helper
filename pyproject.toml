@@ -6,7 +6,7 @@
 
 [project]
 name = "batch-processing-helper"
-version = "0.1.0"
+version = "1.0.0"
 description = "Async batch-processing pipeline for LLM work: submit to the Anthropic or OpenRouter batch APIs, poll in the background, classify each result with an LLM, and record cost and latency."
 readme = "README.md"
 requires-python = ">=3.9"
