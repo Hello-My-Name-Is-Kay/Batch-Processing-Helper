@@ -22,6 +22,7 @@ class ConsoleTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {
             "XDG_CONFIG_HOME": str(root / "xdg"),
             "BATCH_CONSOLE_HOME": str(root / "console"),
+            "BATCH_CONSOLE_STATE": str(root / "console-state"),
             "BATCH_DIR": str(root / "data"),
             "BATCH_ENV_FILE": str(root / "missing.env"),
         })
@@ -165,6 +166,42 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("counts", overview)
         self.assertIn("gateway", overview)
         self.assertEqual(overview["counts"]["running"], 0)
+
+
+class ConsoleLauncherTests(unittest.TestCase):
+    """Command-line behaviour of the background console (no server is started)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.env = patch.dict(os.environ, {
+            "BATCH_CONSOLE_STATE": str(Path(self.temp.name) / "state"),
+            "BATCH_CONSOLE_HOME": str(Path(self.temp.name) / "console"),
+        })
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_default_command_is_foreground_serve(self):
+        # argv without a subcommand must be treated as "serve" (original behaviour).
+        with patch.object(batch_console, "serve_foreground", return_value=0) as serve:
+            self.assertEqual(batch_console.main([]), 0)
+            self.assertEqual(serve.call_args[0][0].command, "serve")
+
+    def test_stop_when_not_running_is_clean(self):
+        self.assertEqual(batch_console.main(["stop"]), 0)
+
+    def test_status_reports_not_running_without_error(self):
+        # Nothing listens on this unused port, so the console is reported as down.
+        self.assertIn(batch_console.main(["status", "--port", "1"]), (0, 1))
+
+    def test_loopback_only_for_background_commands(self):
+        with self.assertRaises(SystemExit):
+            batch_console.main(["start", "--host", "0.0.0.0"])
+
+    def test_state_paths_live_in_state_dir(self):
+        self.assertEqual(batch_console._state_dir().name, "state")
+        self.assertEqual(batch_console._log_file().parent, batch_console._state_dir())
+
 
 
 if __name__ == "__main__":

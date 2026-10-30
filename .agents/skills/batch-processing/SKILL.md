@@ -25,7 +25,7 @@ Project at `{{ cwd | default("Batch-Processing-Helper") }}`. Requires `venv/` an
 | View end-to-end latency and throughput | `bash batch.sh metrics` |
 | View items needing review | `bash batch.sh escalations` |
 | Launch interactive TUI | `bash batch.sh tui` |
-| Open the local web console | `./start-console.sh` |
+| Start gateway + web console | `./start-server.sh --console` |
 | Run unit tests | `python3 test_batch_pipeline.py --unit` |
 
 How it works: see `PIPELINE.md`. Metrics vs stats: see `METRICS.md`.

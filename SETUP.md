@@ -7,7 +7,7 @@ Installing, configuring and scheduling are covered in the [README](README.md). T
 ```bash
 bash batch.sh providers                  # which provider is selected
 bash batch-orchestrator.sh status        # counts, and any escalations
-./start-console.sh                       # local web console on port 8788
+./start-server.sh --status                  # gateway (8787) and web console (8788) status
 python3 test_batch_pipeline.py --unit    # offline tests, no API calls
 ```
 

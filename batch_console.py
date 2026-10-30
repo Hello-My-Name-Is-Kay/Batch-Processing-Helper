@@ -820,16 +820,158 @@ def _console_token() -> str:
     return token
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="Batch Helper local web console")
+# -- background service management (start / stop / status) ------------------
+
+SUBCOMMANDS = ("serve", "start", "stop", "status")
+
+
+def _state_dir() -> Path:
+    return Path(os.environ.get("BATCH_CONSOLE_STATE")
+                or Path.home() / ".local" / "state" / "batch-console")
+
+
+def _pid_file() -> Path:
+    return _state_dir() / "console.pid"
+
+
+def _log_file() -> Path:
+    return _state_dir() / "console.log"
+
+
+def _running_pid():
+    """The console's pid if its process is alive, else None (removes a stale pid file)."""
+    try:
+        pid = int(_pid_file().read_text().strip())
+    except (OSError, ValueError):
+        return None
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        _pid_file().unlink(missing_ok=True)
+        return None
+    return pid
+
+
+def _port_open(host: str, port: int) -> bool:
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
+def _logged_url() -> str:
+    """The most recent login URL written by a console process, or "" if none."""
+    url = ""
+    try:
+        for line in _log_file().read_text(encoding="utf-8").splitlines():
+            if line.startswith("URL: "):
+                url = line[5:]
+    except OSError:
+        pass
+    return url
+
+
+def cmd_start(args) -> int:
+    if _running_pid():
+        print(f"Console already running (pid {_running_pid()}) at http://{args.host}:{args.port}/")
+        print(f"Browser login URL is in {_log_file()}; token file: {_console_token_path()}")
+        return 0
+    state = _state_dir()
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # The log contains the login URL with the console token. Each start writes a
+    # fresh owner-only log so the URL read back is always from this process.
+    fd = os.open(_log_file(), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.chmod(_log_file(), 0o600)
+    import subprocess
+    with os.fdopen(fd, "w", encoding="utf-8") as log_handle:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", str(Path(__file__).resolve()), "serve",
+             "--host", args.host, "--port", str(args.port), "--gateway-port", str(args.gateway_port)],
+            stdin=subprocess.DEVNULL, stdout=log_handle, stderr=subprocess.STDOUT,
+            start_new_session=True, cwd=str(ROOT))
+    _pid_file().write_text(str(proc.pid))
+    for _ in range(50):
+        if proc.poll() is not None:
+            break
+        if _port_open(args.host, args.port) and _logged_url():
+            break
+        time.sleep(0.1)
+    if proc.poll() is not None:
+        _pid_file().unlink(missing_ok=True)
+        print(f"Console failed to start; see {_log_file()}", file=sys.stderr)
+        return 1
+    print(f"Console started (pid {proc.pid}) at http://{args.host}:{args.port}/")
+    print(f"Login URL (keep private): {_logged_url()}")
+    print(f"Log: {_log_file()}")
+    return 0
+
+
+def cmd_stop(args) -> int:
+    pid = _running_pid()
+    if pid is None:
+        print("Console is not running")
+        return 0
+    import signal
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(100):
+        if _running_pid() is None:
+            break
+        time.sleep(0.1)
+    print("Console stopped" if _running_pid() is None else "Stop sent; console still shutting down")
+    return 0
+
+
+def cmd_status(args) -> int:
+    pid = _running_pid()
+    console_up = _port_open(args.host, args.port)
+    gateway = ConsoleApp("", gateway_port=args.gateway_port).gateway_health()
+    print(f"Web console : {'running' if console_up else 'not running'} "
+          f"(http://{args.host}:{args.port}/{'  pid ' + str(pid) if pid else ''})")
+    print(f"Gateway     : {'running' if gateway.get('running') else 'not running'} "
+          f"(http://127.0.0.1:{args.gateway_port}/v1)")
+    return 0 if console_up and gateway.get("running") else 1
+
+
+def _console_token_path() -> Path:
+    return Path(os.environ.get("BATCH_CONSOLE_HOME") or console_config_dir()) / "console-token"
+
+
+def _add_server_options(parser) -> None:
     parser.add_argument("--host", default="127.0.0.1",
                         help="loopback address to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8788, help="console port (default: 8788)")
     parser.add_argument("--gateway-port", type=int, default=8787, help="batch gateway port")
-    parser.add_argument("--open", action="store_true", help="open the console in the default browser")
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or argv[0] not in SUBCOMMANDS:
+        argv = ["serve"] + argv  # foreground server, the original behaviour
+    parser = argparse.ArgumentParser(description="Batch Helper local web console")
+    sub = parser.add_subparsers(dest="command", required=True)
+    serve = sub.add_parser("serve", help="run the console in this terminal (Ctrl+C to stop)")
+    _add_server_options(serve)
+    serve.add_argument("--open", action="store_true", help="open the console in the default browser")
+    start = sub.add_parser("start", help="run the console in the background")
+    _add_server_options(start)
+    sub.add_parser("stop", help="stop the background console")
+    status = sub.add_parser("status", help="show console and gateway status")
+    _add_server_options(status)
     args = parser.parse_args(argv)
-    if args.host not in ("127.0.0.1", "localhost", "::1"):
+    if getattr(args, "host", "127.0.0.1") not in ("127.0.0.1", "localhost", "::1"):
         parser.error("the console is loopback-only; use 127.0.0.1, localhost, or ::1")
+    if args.command == "start":
+        return cmd_start(args)
+    if args.command == "stop":
+        return cmd_stop(args)
+    if args.command == "status":
+        return cmd_status(args)
+    return serve_foreground(args, parser)
+
+
+def serve_foreground(args, parser) -> int:
     token = _console_token()
     app = ConsoleApp(token, gateway_port=args.gateway_port)
     try:

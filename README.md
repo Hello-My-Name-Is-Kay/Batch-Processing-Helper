@@ -61,11 +61,13 @@ BATCH_PROVIDER=groq
 GROQ_API_KEY=gsk_...
 ```
 
-You can also open the Setup page and save credentials interactively:
+Start the services (gateway for Pi, plus the web page):
 
 ```bash
-./start-console.sh
+fish start-server.fish --console     # or: ./start-server.sh --console
 ```
+
+Then open **http://127.0.0.1:8788/** and paste the token, or use the login URL printed at startup.
 
 See [API key sources](#api-key-sources) for the complete lookup order and system-wide options.
 
@@ -85,14 +87,32 @@ bash batch.sh --provider groq --dry-run send "Summarize batch APIs in three bull
 
 ## Web console
 
-The local web console provides setup, monitoring, and operational controls in one page. It runs separately from the OpenAI-compatible gateway:
+The web console is the browser page for setup, monitoring, and control. It is a separate service from the OpenAI-compatible gateway.
+
+| What | Port | Started by |
+|---|---|---|
+| Web console (browser page) | `8788` | `start-server --console`, or `start-console` |
+| Gateway (Pi, OpenAI-compatible API) | `8787` | `start-server` (with or without `--console`) |
+
+Start both in the background:
 
 ```bash
-./start-console.sh
-# or: venv/bin/python batch_console.py --open
+fish start-server.fish --console        # gateway + web page
+fish start-server.fish --status         # what is running
+fish start-console.fish stop            # stop only the web page
 ```
 
-The console binds to `127.0.0.1:8788` by default. Startup prints an authenticated URL containing the console access token in its fragment. Keep that URL private; the fragment is used by the browser as a session token and is never sent in the URL request.
+The same actions exist in Bash: `./start-server.sh --console`, `./start-console.sh start|stop|status`.
+
+Open **http://127.0.0.1:8788/**. The page asks for the console token. The login URL with the token is printed when the console starts and written to `~/.local/state/batch-console/console.log` (owner-only). The token itself is stored in `~/.config/batch-processing-helper/console-token`.
+
+To run the page in the foreground instead (Ctrl+C to stop):
+
+```bash
+./start-console.sh            # or: venv/bin/python batch_console.py serve --open
+```
+
+The console binds to `127.0.0.1:8788` by default. The login URL contains the console access token in its fragment. Keep that URL private; the fragment is used by the browser as a session token and is never sent in the URL request.
 
 The console includes:
 
@@ -281,13 +301,14 @@ venv/bin/python batch_credentials.py status
 ### Start the gateway
 
 ```bash
-./start-server.sh               # background
-./start-server.sh --foreground  # current terminal
-./start-server.sh --mcp         # stdio MCP server, not HTTP
-./start-server.sh --help
+fish start-server.fish                 # gateway in the background (fish)
+fish start-server.fish --console       # gateway + web console
+fish start-server.fish --foreground    # gateway in this terminal
+fish start-server.fish --status        # gateway and console status
+fish start-server.fish --mcp           # stdio MCP server, not HTTP
 ```
 
-Fish equivalents are available through `./start-server.fish`.
+The launcher's file name is `start-server.fish` (with a hyphen). The Bash equivalent is `./start-server.sh` with the same options.
 
 Management commands:
 

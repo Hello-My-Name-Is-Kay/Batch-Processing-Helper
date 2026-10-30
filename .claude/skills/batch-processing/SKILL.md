@@ -42,7 +42,7 @@ curl -s https://api.groq.com/openai/v1/models -H "Authorization: Bearer $GROQ_AP
 | Pipeline overview | `bash batch.sh status` |
 | Latency / tokens / cost | `bash batch.sh history`, `stats`, `metrics` |
 | Results needing a human | `bash batch.sh escalations` |
-| Open the local web console | `./start-console.sh` |
+| Start gateway + web console | `./start-server.sh --console` |
 | Unit tests (no network) | `python3 test_batch_pipeline.py --unit` |
 
 Use the project venv: `BATCH_PYTHON=venv/bin/python` if `python3` lacks the packages.
