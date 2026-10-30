@@ -538,6 +538,12 @@ test_batch_gateway.py               Gateway regression suite
 
 The project is currently suitable for local and modest single-machine workloads, but it is not yet designed or validated for industrial-scale or mission-critical operation. The detailed assessment, risk matrix, target architecture, hardening phases, and deployment exit criteria are documented in [INDUSTRIAL_READINESS_REVIEW.md](INDUSTRIAL_READINESS_REVIEW.md).
 
+## Design notes (WIP)
+
+> **Work in progress.** The design below is a proposal and is **not implemented**. Current `batch send` behaviour is unchanged.
+
+A request outbox would hold unsent requests, bundle them into fewer provider batches, allow cancellation before billing, and enforce limits and budgets before upload. Read the full design, open decisions and milestones in [DESIGN_REQUEST_OUTBOX.md](DESIGN_REQUEST_OUTBOX.md).
+
 ## License
 
 [MIT](LICENSE)
