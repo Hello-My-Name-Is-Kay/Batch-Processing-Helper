@@ -9,7 +9,7 @@ The project provides four interfaces over the same provider layer:
 - **MCP server** — expose pipeline operations to Pi, Claude Desktop, and other MCP hosts.
 - **HTTP chat gateway** — turn OpenAI-compatible chat requests into provider batches.
 
-**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Web console](#web-console) · [Commands](#commands) · [How it works](#how-it-works) · [Batch management](#batch-management) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [API key sources](#api-key-sources) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations)
+**Contents:** [Features](#features) · [Supported providers](#supported-providers) · [Quick start](#quick-start) · [Web console](#web-console) · [Commands](#commands) · [How it works](#how-it-works) · [Batch management](#batch-management) · [MCP server](#mcp-server) · [Chat gateway](#chat-gateway) · [Configuration](#configuration) · [API key sources](#api-key-sources) · [Results and metrics](#results-and-metrics) · [Development](#development) · [Limitations](#limitations) · [Industrial readiness](#industrial-readiness)
 
 ## Features
 
@@ -506,6 +506,10 @@ test_batch_gateway.py               Gateway regression suite
 - The gateway binds to localhost by default. Do not expose it publicly without a separate authentication and network-security layer.
 - The web console is intentionally loopback-only and uses a local access token; it is not a multi-user or remote administration panel.
 - Environment files are read as plain `KEY=VALUE` data. Shell execution, command substitution, and variable expansion are intentionally unsupported in credential files.
+
+## Industrial readiness
+
+The project is currently suitable for local and modest single-machine workloads, but it is not yet designed or validated for industrial-scale or mission-critical operation. The detailed assessment, risk matrix, target architecture, hardening phases, and deployment exit criteria are documented in [INDUSTRIAL_READINESS_REVIEW.md](INDUSTRIAL_READINESS_REVIEW.md).
 
 ## License
 
